@@ -433,17 +433,17 @@ pub unsafe fn drop(slot: &mut ManuallyDrop<T>);
 
 *** 探索 Vec 内部结构
 #+begin_src rust
-    let mut lst = Vec::with_capacity(10);
-    lst.push("hello");
-    lst.push("world");
+let mut lst = Vec::with_capacity(10);
+lst.push("hello");
+lst.push("world");
 
-    let (p, cap, len) = unsafe { std::mem::transmute::<Vec<&str>, (usize, usize, usize)>(lst) };
-    println!("0x{:x}", p); // it's on heap
-    let p2 = p as *const &str;
-    assert_eq!("hello", unsafe { *p2 });
-    assert_eq!("world", unsafe { *p2.offset(1) });
-    assert_eq!(10, cap);
-    assert_eq!(2, len);
+let (p, cap, len) = unsafe { std::mem::transmute::<Vec<&str>, (usize, usize, usize)>(lst) };
+println!("0x{:x}", p); // it's on heap
+let p2 = p as *const &str;
+assert_eq!("hello", unsafe { *p2 });
+assert_eq!("world", unsafe { *p2.offset(1) });
+assert_eq!(10, cap);
+assert_eq!(2, len);
 #+end_src
 
 *** 探索 vtable
@@ -457,7 +457,9 @@ trait Foo {
     where
         Self: Sized;
 
-    fn qux(&self);
+    fn qux(&self) {
+        println!("calling qux: blanket implementation");
+    }
 }
 
 impl<T: std::fmt::Debug> Foo for T {
@@ -467,10 +469,6 @@ impl<T: std::fmt::Debug> Foo for T {
 
     fn baz(&self) {
         println!("calling baz: {:?}", self);
-    }
-
-    fn qux(&self) {
-        println!("calling qux: {:?}", self);
     }
 }
 
@@ -917,12 +915,17 @@ impl<T: ?Sized> const Deref for &mut T {
 + dbg! (my dbgt!)
 
 ** retain()
-example: faster? repeated intersection
-#+BEGIN_SRC rust
+Retains only the elements specified by the predicate
+This method operates in place, visiting each element exactly once in the original order, and preserves the order of the retained elements.
+
+基本 collection 都实现了 retain, 可以看看官方文档的例子
+
+#+begin_src rust
 let mut left = lst[0].clone();
 for i in 1..lst.len() {
     left.retain(|x| lst[i].contains(x));
 }
+#+end_src
 
 ** match pattern/ergonomic
 https://doc.rust-lang.org/book/ch18-03-pattern-syntax.html
