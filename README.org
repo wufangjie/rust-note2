@@ -927,6 +927,13 @@ for i in 1..lst.len() {
 }
 #+end_src
 
+** std::cmp::Reverse
+就是一个简单的 wrapper (要用里面的话直接 .0 就可以, 设置了 pub), 然后反向实现了 PartialOrd, 从而达到反向排序的效果
+
+作用:
+1. 对于不能加负号的反向排序, 而且应该会比加负号快 (不用转换)
+2. 利用这个可以让标准库的 BinaryHeap 可适用最小堆
+
 ** match pattern/ergonomic
 https://doc.rust-lang.org/book/ch18-03-pattern-syntax.html
 https://doc.rust-lang.org/rust-by-example/flow_control/match.html
