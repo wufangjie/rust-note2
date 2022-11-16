@@ -845,14 +845,15 @@ https://runrust.miraheze.org/wiki/Zero-sized_type
 * Memory Safe
 ** 分类
 | 悬垂指针 | dangling pointer |
-| UAF      | use after free   |
+| UAF      | Use After Free   |
 |          | double free      |
 | 未初始化 |                  |
 | 空指针   |                  |
-| 越界访问 |                  |
-| 内存溢出 |                  |
+| 越界访问 | Out Of Bounds    |
+| 内存溢出 | Out Of Memory    |
 | 内存泄漏 | memory leak      |
 |          | data race        |
+| 栈溢出   | stack overflow   |
 
 ** 说明
 rust 能解决的也不是所有的内存安全问题, 而是近年来频率最高的一些
@@ -890,6 +891,28 @@ https://www.cnblogs.com/ishen/p/13200838.html
 
 | store_buffer     | release |
 | invalidate_queue | acquire |
+
+* 内存对齐
+https://zhuanlan.zhihu.com/p/33252691?utm_id=0
+https://doc.rust-lang.org/reference/type-layout.html
+
+变量的起始地址都必须是它的 align 的整数倍, 否则就是访问 unaligned address, 就会报错
+
+align 最小是 1, 且都是 2 整数次幂,
+复合型数据的 align 的设置一般需要兼顾效率(读取次数)和空间的浪费
+ZST 的 align 一般是 1, 但可以设置成别的, 这也是下面链接里讨论的 bug 出现的原因
+https://doc.rust-lang.org/nomicon/vec/vec-zsts.html
+
+#+begin_src rust
+#[repr(C, align(8))]
+struct Empty;
+
+fn main() {
+    dbg!(std::mem::align_of::<Empty>());
+    dbg!(std::mem::size_of::<Empty>());
+    dbg!(std::mem::align_of::<()>());
+}
+#+end_src
 
 * 这后面的内容还比较乱, 有时间再整理
 * 易错和小技巧
@@ -992,6 +1015,13 @@ https://doc.rust-lang.org/reference/trait-bounds.html#lifetime-bounds
 | ok     |    |         |            |
 | err    |    |         |            |
 
+** by and by_key
+|               | by | by_key |
+| sort          |    |        |
+| cmp::max      |    |        |
+| cmp::min      |    |        |
+| iterator::max |    |        |
+
 ** as_ref, as_mut, get_ref, get_mut
 ** Drop Check
 太复杂且不是很重要, 可以看死灵书
@@ -1009,6 +1039,9 @@ unsafe impl<#[may_dangle] T: ?Sized, A: Allocator> Drop for Box<T, A> {
 }
 #+end_src
 
+** std::intrinsics
+intrinsic means it is built in to the compiler, rather than being implemented in Rust library code
+
 * 实战
 ** Flatten
 https://www.youtube.com/watch?v=yozQ9C69pNs
@@ -1023,3 +1056,13 @@ https://rust-lang.github.io/async-book/
 
 timer_future
 executor
+
+** nomicon
+第九章 implementing Vec 挺不错的, 慢慢改进, 能学到一些关于
+| 指针操作 | ptr::{read, write, copy}                 |
+| 内存分配 | alloc::{alloc, realloc, dealloc, Layout} |
+|          | forget and drop                          |
+| 内存对齐 | align                                    |
+| ZST      |                                          |
+
+第十章 Arc 和 Mutex (还没有开始写) 都已经看了源码, 就没去看
