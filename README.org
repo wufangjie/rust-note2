@@ -518,6 +518,10 @@ trait object 是 dst, 所以 dyn 只能放在 &, &mut, Box, Rc, Arc 这些的后
 
 rustc 的具体实现可能不是这样, 但很有助于理解
 
+一点佐证:
+https://internals.rust-lang.org/t/make-associated-consts-object-safe/16357
+提到 The current way that trait objects work is in that they actually implement the trait
+
 ** associated type/constant/function
 associated type is object safe, while associated const and function are not
 
