@@ -721,8 +721,8 @@ NOTE: Send 是有前提的, 比如 borrow checker, 有 borrowed 就不能 send, 
 
 ** !Send but (auto) Sync types
 + MutexGuard
-+ RwReadGuard
-+ RwWriteGuard
++ RwLockReadGuard
++ RwLockWriteGuard
 
 because lock and release in differnt threads are supposed to be UB
 
@@ -762,20 +762,23 @@ where
     T: Sync + Send + ?Sized, // need Sync because of Arc<Cell<T>>
 #+end_src
 
-*** for those only keep & data
+*** struct, if its all fields are references
 #+begin_src rust
 impl<'a, A> Send for std::option::Iter<'a, A>
 where
     A: Sync
 #+end_src
 
-*** Mutex
+*** Mutex and RwLock
 #+begin_src rust
 impl<T: ?Sized + Send> Sync for Mutex<T>
+impl<T: ?Sized + Sync + Send> Sync for RwLock<T>
 #+end_src
-.lock() can get &mut T and then T (std::mem)
-why not need T: Sync, because of the lock only one thread can get &T
-而 RwLock 就需要 T: Sync
+
++ 为什么需要 T: Send, 因为 lock()/write() 能得到 &mut T (deref a guard) 然后 T (* or using std::mem)
++ 为什么不需要 T: Sync, 因为锁的存在保证只有一个线程能得到 &T, 从而不会有 data race
++ 同上 RwLock 需要 T: Sync (因为 T 可能是 Cell)
++ 需要特别说明的是, MutexGuard 虽然实现了 DerefMut 可以得到 &mut T, 从而得到 T, 但是别忘了 DerefMut 的参数是 &mut self, 也就是不可能在 Sync 共享时取到 (这个和 Mutex 有很大区别)
 
 * async
 https://rust-lang.github.io/async-book/
@@ -1023,8 +1026,6 @@ https://doc.rust-lang.org/reference/trait-bounds.html#lifetime-bounds
 | iterator::max |    |        |
 
 ** as_ref, as_mut, get_ref, get_mut
-** Drop Check
-太复杂且不是很重要, 可以看死灵书
 
 * rust 的魔法
 ** manuallydrop
