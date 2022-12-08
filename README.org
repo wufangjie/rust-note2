@@ -1,3 +1,9 @@
+#+AUTHOR: wfj
+#+EMAIL: wufangjie1223@126.com
+#+OPTIONS: ^:{} \n:t email:t
+#+HTML_HEAD_EXTRA: <style type="text/css"> body {padding-left: 26%; background: #e3edcd;} #table-of-contents {position: fixed; width: 25%; height: 100%; top: 0; left: 0; overflow-y: scroll; resize: horizontal;} i {color: #666666;} pre, pre.src:before {color: #ffffff; background: #131926;} </style>
+#+HTML_HEAD_EXTRA: <script type="text/javascript"> function adjust_html(){document.getElementsByTagName("body")[0].style.cssText="padding-left: "+(parseInt(document.getElementById("table-of-contents").style.width)+5)+"px; background: #e3edcd;"}; window.onload=function(){document.getElementById("table-of-contents").addEventListener("mouseup",adjust_html,true)}</script>
+
 * Ownership
 https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html
 
@@ -899,7 +905,7 @@ https://www.cnblogs.com/ishen/p/13200838.html
 | store_buffer     | release |
 | invalidate_queue | acquire |
 
-* 内存对齐
+* Memory Alignment
 https://zhuanlan.zhihu.com/p/33252691?utm_id=0
 https://doc.rust-lang.org/reference/type-layout.html
 
@@ -920,6 +926,138 @@ fn main() {
     dbg!(std::mem::align_of::<()>());
 }
 #+end_src
+
+* Drop, Drop Check
+** Drop Trait
+参考 std 的 Drop Trait 文档, https://doc.rust-lang.org/std/ops/trait.Drop.html
+
+*** 如非必要不要手动 impl Drop
+Drop 一般是用于增减引用计数, 释放内存, 文件资源等, 一旦手动 impl, 就必须非常小心
+比如以下代码通就不过编译, 因为在 scope 的最后, 会有一次隐式的 drop 调用, 可能会用到 &data, 解决方法就是下面要讲的 #[may_dangle] (unsafe)
+
+#+begin_src rust
+struct X<'a>(&'a i32);
+
+impl Drop for X<'_> {
+    fn drop(&mut self) {}
+}
+
+fn main() {
+    let mut data = vec![1, 2, 3];
+    let x = X(&data[0]);
+    data.push(4);
+}
+#+end_src
+
+*** 只要变量被构造出来, 即使线程 panic 了, drop 也会被执行
+最重要的例子就是多线程锁 poison 的实现
+
+#+begin_src rust
+struct PrintOnDrop(i32);
+
+impl Drop for PrintOnDrop {
+    fn drop(&mut self) {
+        println!("dropping {}", self.0);
+    }
+}
+
+fn main() {
+    std::thread::spawn(|| {
+        let a = PrintOnDrop(1); // will drop
+	let mut b; // will not drop, because not init
+        panic!("thread panic");
+        b = PrintOnDrop(2);
+	let c = PrintOnDrop(3);
+    })
+    .join();
+    println!("end of main()");
+}
+#+end_src
+
+*** impl Copy 了就不能再 impl Drop
+Types that are Copy get implicitly duplicated by the compiler, making it very hard to predict when, and how often destructors will be executed
+
+上面的意思可能是, copy 型变量只要 move (函数调用, 赋值等)了就会 copy, 可能会很频繁
+
+以下代码通不过编译
+#+begin_src rust
+#[derive(Clone, Copy)]
+struct X<'a>(&'a i32);
+
+impl Drop for X<'_> {
+    fn drop(&mut self) {}
+}
+#+end_src
+
+*** ops::Drop::drop vs mem::drop
+You cannot call ops::Drop::drop yourself, 如果确实需要可以用 mem::drop (我看源码实现里, 这个函数体是空的, 可能是 rustc 的魔法)
+
+** destructor 的构成 (Drop Glue)
++ A call to Drop::drop for *that value*, if special Drop trait is implemented for its type
++ An automatically generated "drop glue" which recursively calls the destructors of all the fields of this value
+
+** Drop Order
++ variables are dropped in the reverse order of their definition
++ fields of structs and tuples in order of their definition
+
+** Drop Check
+https://doc.rust-lang.org/nomicon/dropck.html
+https://ng6qpa7sht.feishu.cn/docx/LGnVdlqwGoIUpuxUMWRcptEbndd
+
+作用: 防止 drop 时可能对其包含的引用字段解引用而造成的 use-after-free 问题
+原则: For a generic type to soundly implement drop, its generics arguments must strictly outlive it
+
+** #[may_dangle]
+需要 #![feature(dropck_eypatch)] + nightly
+就是人为担保 drop 里的被修饰的那个参数不会解引用
+
+修改上面的 Drop Trait 的例子, 需要 nightly
+#+begin_src rust
+#![feature(dropck_eyepatch)]
+
+unsafe impl<#[may_dangle] 'a> Drop for X<'a> {
+    fn drop(&mut self) {}
+}
+#+end_src
+
+** ptr::drop_in_place
+in-place 意思是就地
+可以看 std 文档, 基本上等同于 ptr::read, 然后 drop, 不过有以下几个优势
+1. 可以 drop DST (比如 trait object)
+2. 对于 manually allocated memory 可以更友好地释放
+3. 可以 drop pinned data
+
+不足: 必须是 align 非 packed (如: #[repr(packed(2))], 但我试了貌似也可以, 不重要以后再看), 此时需要 ptr::read_unaligned 来解决
+
+** ManuallyDrop<T>
++ 是编译器开的后门, out of scope 时不会调用 drop
++ 它实现了 Deref 和 DerefMut, 能直接调 T 的方法, 所以其他的函数都定义为了 associated functions
++ 一般如果想让编译器再度接管的话用 into_inner()
+
+#+begin_src rust
+#[lang = "manually_drop"] // the magic attribute
+pub struct ManuallyDrop<T: ?Sized> {
+    value: T,
+}
+#+end_src
+
+*** mem::forget
+#+begin_src rust
+pub const fn forget<T>(t: T) {
+    let _ = ManuallyDrop::new(t);
+}
+#+end_src
+
+*** Box::leak
+Box::leak 的源码, .0 用到了 deref, consume 了 b, ManuallyDrop 又使得不会释放 b 指向的堆上的资源, 需要重新自动 drop 的话可以用返回值 Box::from_raw()
+#+begin_src rust
+unsafe { &mut *mem::ManuallyDrop::new(b).0.as_ptr() }
+#+end_src
+
+*** 其他间接调用
++ Rc::new
++ Arc::new
++ Vec::into_iter
 
 * 这后面的内容还比较乱, 有时间再整理
 * 易错和小技巧
@@ -996,7 +1134,7 @@ where
 }
 #+end_src
 
-** bounds
+** all kinds of bounds
 *** T: Trait (trait bound syntax)
 *** T: 'a
 T: 'a means that all lifetime parameters of T outlive 'a
@@ -1032,9 +1170,6 @@ https://doc.rust-lang.org/reference/trait-bounds.html#lifetime-bounds
 ** as_ref, as_mut, get_ref, get_mut
 
 * rust 的魔法
-** manuallydrop
-#[lang = "manually_drop"] attribute is what connects it to that special behavior in the compiler
-
 ** box 的 drop
 #+begin_src rust
 unsafe impl<#[may_dangle] T: ?Sized, A: Allocator> Drop for Box<T, A> {
