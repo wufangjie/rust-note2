@@ -1,0 +1,224 @@
+* Drop Trait
+参考 std 的 Drop Trait 文档, https://doc.rust-lang.org/std/ops/trait.Drop.html
+
+** 如非必要不要手动 impl Drop
+Drop 一般是用于增减引用计数, 释放内存, 文件资源等, 一旦手动 impl, 就必须非常小心
+比如以下代码通就不过编译, 因为在 scope 的最后, 会有一次隐式的 drop 调用, 可能会用到 &data, 解决方法就是下面要讲的 #[may_dangle] (unsafe)
+
+#+begin_src rust
+struct X<'a>(&'a i32);
+
+impl Drop for X<'_> {
+    fn drop(&mut self) {}
+}
+
+fn main() {
+    let mut data = vec![1, 2, 3];
+    let x = X(&data[0]);
+    data.push(4);
+}
+#+end_src
+
+** 只要变量被构造出来, 即使线程 panic 了, drop 也会被执行
+最重要的例子就是多线程锁 poison 的实现
+
+#+begin_src rust
+struct PrintOnDrop(i32);
+
+impl Drop for PrintOnDrop {
+    fn drop(&mut self) {
+        println!("dropping {}", self.0);
+    }
+}
+
+fn main() {
+    std::thread::spawn(|| {
+        let a = PrintOnDrop(1); // will drop
+	let mut b; // will not drop, because not init
+        panic!("thread panic");
+        b = PrintOnDrop(2);
+	let c = PrintOnDrop(3);
+    })
+    .join();
+    println!("end of main()");
+}
+#+end_src
+
+** impl Copy 了就不能再 impl Drop
+Types that are Copy get implicitly duplicated by the compiler, making it very hard to predict when, and how often destructors will be executed
+
+上面的意思可能是, copy 型变量只要 move (函数调用, 赋值等)了就会 copy, 可能会很频繁
+
+以下代码通不过编译
+#+begin_src rust
+#[derive(Clone, Copy)]
+struct X<'a>(&'a i32);
+
+impl Drop for X<'_> {
+    fn drop(&mut self) {}
+}
+#+end_src
+
+** ops::Drop::drop vs mem::drop
+You cannot call ops::Drop::drop yourself, 如果确实需要可以用 mem::drop (我看源码实现里, 这个函数体是空的, 可能是 rustc 的魔法)
+
+* destructor and drop order
+1. If T: Drop, calling <T as std::ops::Drop>::drop
+2. Recursively running the destructor of all of its fields.
+   1. The fields of a **struct** are dropped in declaration order.
+   2. The fields of the active **enum** variant are dropped in declaration order.
+   3. The fields of a **tuple** are dropped **in order**.
+   4. The elements of an **array** or **owned slice** are dropped from the first element to the last.
+   5. The variables that a **closure** captures by move are dropped in an **unspecified** order.
+   6. **Trait objects** run the destructor of the underlying type.
+   7. Other types don't result in any further drops.
+
+* Drop Check
+https://doc.rust-lang.org/nomicon/dropck.html
+https://ng6qpa7sht.feishu.cn/docx/LGnVdlqwGoIUpuxUMWRcptEbndd
+
+** 作用
+防止 drop 时可能对其包含的引用字段解引用而造成的 use-after-free 问题
+或者说是为了解决 lifetime 一样长的在 drop 的时候的内存安全问题
+
+** 原则 (The Big Rule)
+For a generic type to soundly implement drop, its generics arguments must strictly outlive it
+这个 rule 是充分但不必要条件
+
+drop checker 并不知道 drop() 中的具体实现, 所以它只能 force all borrowed data in a value to strictly outlive that value
+
+** sound generic drop
+只有 generic (包括 lifetime) 才会出问题
+
+* 例外 (escape hatch) #[may_dangle]
+作用是对当前 drop 做 drop check 的时候忽略被修饰的参数
+就是人为担保 drop 里的被修饰的那些参数虽然是悬垂的但在这个 drop 里不会解引用
+
+#+begin_src rust
+#![feature(dropck_eyepatch)] // 需要开启这个 unstable feature
+
+unsafe impl<#[may_dangle] 'a> Drop for X<'a> {
+    fn drop(&mut self) {}
+}
+#+end_src
+
+** 自己实现智能指针的时候会用到, 比如 box
+box<T> 肯定不会在 drop 的时候去 access T, 所以我们需要实现
+
+#+begin_src rust
+#![feature(dropck_eyepatch)]
+
+use std::alloc::{alloc, dealloc, handle_alloc_error, Layout};
+use std::fmt;
+use std::ptr::{drop_in_place, write, NonNull};
+
+#[derive(Debug)]
+struct MyBox<T>(NonNull<T>); // NonNull 协变会在后面的章节讲到
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        if std::mem::size_of::<T>() == 0 {
+            Self(NonNull::dangling())
+        } else {
+            let layout = Layout::new::<T>();
+            unsafe {
+                let ptr = alloc(layout) as *mut T;
+                if ptr.is_null() {
+                    handle_alloc_error(layout);
+                }
+                // *ptr = x; // this assignment will drop the old value "", i.e. call drop()
+                write(ptr, x); // ptr implement will not call drop()
+                Self(NonNull::new_unchecked(ptr))
+            }
+        }
+    }
+}
+
+unsafe impl<#[may_dangle] T> Drop for MyBox<T> {
+    //impl<T> Drop for MyBox<T> {
+    fn drop(&mut self) {
+        println!("dropping MyBox");
+        if std::mem::size_of::<T>() > 0 {
+            unsafe {
+                drop_in_place(self.0.as_ptr());
+                let layout = Layout::new::<T>();
+                dealloc(self.0.as_ptr() as *mut u8, layout);
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Foo<T: fmt::Debug>(T);
+
+impl<T: fmt::Debug> Drop for Foo<T> {
+    fn drop(&mut self) {
+        println!("dropping Foo: {:?}", self.0);
+    }
+}
+
+fn main() {
+    let _a;
+    let b = Foo("hello");
+    // _a = Box::new(&b); // std's Box is ok
+    _a = MyBox::new(&b); // if we did not add may_dangle, it will failed
+}
+#+end_src
+
+** 会不会有问题
+根据之前的 destructor 那一节, MyBox<T> 实现了 Drop 所以会先调用 MyBox<T> 的 drop, 也就是会先调用 drop_in_place, 然后递归地调用其字段 T 的 destructor
+
+上面的例子中 T 是 &Foo, 没有 impl drop, 所以就结束了, 是没有问题的
+
+如果改成 owned 其实也是没有问题的, 因为 drop_in_place (更详细的见后文) 实际上是先 ptr_read 然后 out of scope 之后 drop (也就是调用 T 的 destructor), 以下代码是没问题的
+
+#+begin_src rust
+fn main() {
+    let _a;
+    let b = Foo("hello");
+    _a = MyBox::new(b);
+}
+#+end_src
+
+** 新的问题
+如果 T 是会有 UAF 问题的, may_dangle 跳过检查 T 的话是不是就检测不出来了, 以下代码会出现 UAF
+#+begin_src rust
+fn main() {
+    let _a;
+    let b = "hello".to_string();
+    _a = MyBox::new(Foo(&b));
+}
+#+end_src
+
+** 解决办法 phantomData
+所以对 T 做 drop check 还是必要的, 看 std 的实现是用了 Unique<T>, 将 NonNull 改成 core::ptr::Unique 之后就可以了
+
+事实上 drop check 不仅对自身的各个参数做, 还会递归的对自身包含的字段做, 如果能让 drop check 认为该类型包含了一个 T 就可以, 但对于实际使用我们希望这个实现用的是一个 ZST, 这就是 PhantomData
+
+*** using Unique
+#+begin_src rust
+pub struct Unique<T: ?Sized> {
+    pointer: NonNull<T>,
+    _marker: PhantomData<T>,
+}
+#+end_src
+https://github.com/rust-lang/rfcs/blob/master/text/0769-sound-generic-drop.md#phantom-data
+
+*** using PhantomData
+用 PhantomData 也能达到同样的效果, PhantomData 详见后面的章节
+#+begin_src rust
+use std::marker::PhantomData;
+struct MyBox<T>(NonNull<T>, PhantomData<T>);
+#+end_src
+
+* ptr::drop_in_place
+in-place 意思是就地
+可以看 std 文档, 基本上等同于 ptr::read, 然后 drop, 不过有以下几个优势
+1. 可以 drop DST (比如 trait object)
+2. 对于 manually allocated memory 可以更友好地释放
+3. 可以 drop pinned data
+
+不足: 必须是 align 非 packed (如: #[repr(packed(2))], 但我试了貌似也可以, 不重要以后再看), 此时需要 ptr::read_unaligned 来解决
+
+* ManuallyDrop<T>
+详见 std::mem.org 章节

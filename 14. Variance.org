@@ -1,0 +1,101 @@
+https://doc.rust-lang.org/nomicon/subtyping.html
+文章写的非常好, 可能要细读几遍
+
+* [sub|super]-type, [sub|super]-trait
+#+begin_src rust
+trait Cat: Animal {
+    fn meow(&self);
+}
+
+'b: 'a
+#+end_src
+
+* meowing dog problem
+#+begin_src rust
+fn evil_feeder(pet: &mut Animal) {
+    let spike: Dog = ...;
+
+    // `pet` is an Animal, and Dog is a subtype of Animal,
+    // so this should be fine, right..?
+    *pet = spike;
+}
+
+fn main() {
+    let mut mr_snuggles: Cat = ...;
+    evil_feeder(&mut mr_snuggles);  // Replaces mr_snuggles with a Dog
+    mr_snuggles.meow();             // OH NO, MEOWING DOG!
+}
+#+end_src
+
+* coersion 最原始的想法
+anywhere a value of type T is expected, we will also accept values that are subtypes of T
+
+* 协变, 逆变, 不变
+Given two types Sub and Super, where Sub is a subtype of Super:
+
++ F is covariant if F<Sub> is a subtype of F<Super> (subtyping "passes through")
++ F is contravariant if F<Super> is a subtype of F<Sub> (subtyping is "inverted")
++ F is invariant otherwise (no subtyping relationship exists)
+
+* 常见类型
+|               | 'a        | T             | U         |
+|---------------+-----------+---------------+-----------|
+| &'a T         | covariant | covariant     |           |
+| &'a mut T     | covariant | invariant     |           |
+| Box<T>        |           | covariant     |           |
+| UnsafeCell<T> |           | invariant     |           |
+| fn(T) -> U    |           | contravariant | covariant |
+
+* 扩展类型
+|          | 可类比        |
+|----------+---------------|
+| Vec<T>   | Box<T>        |
+| Cell<T>  | UnsafeCell<T> |
+| *const T | &'a T         |
+| *mut T   | &'a mut T     |
+
+* Box<T>, UnsafeCell<T>
+其实 owned 的 Cell 和 Box 并没有区别, 之所以设计成 invariant, 是为了保持 &T covariant 的简单
+#+begin_src rust
+fn down_box<'r>(x: Box<&'static str>) -> Box<&'r str> {
+    x
+}
+
+fn down_cell<'r>(x: Cell<&'static str>) -> Cell<&'r str> {
+    x // not allowed
+}
+#+end_src
+
+* fn(T) -> U
+比较特殊, 对于参数是逆变, 对于返回值是协变
+用面向对象或者 lifetime 比大小的方法可以加深理解
+
+* 自己实现 Arc 协变和不变的区别
+#+begin_src rust
+struct ArcInner<T> {
+    data: T,
+    rc: AtomicUsize,
+}
+
+pub struct ArcIn<T> {
+    inner: *mut ArcInner<T>,
+}
+
+pub struct ArcCo<T> {
+    inner: NonNull<ArcInner<T>>,
+    //_marker: PhantomData<ArcInner<T>>
+}
+
+fn down_arc_in<'r>(x: ArcIn<&'static str>) -> ArcIn<&'r str> {
+    x // not allowed
+}
+
+fn down_arc_co<'r>(x: ArcCo<&'static str>) -> ArcCo<&'r str> {
+    x
+}
+#+end_src
+
+* 结构体的协变, 逆变, 不变
++ 所有字段都是协变或本身, 则整个对象就是协变
++ 所有字段都是逆变或本身, 则整个对象就是逆变
++ 否则就是不变

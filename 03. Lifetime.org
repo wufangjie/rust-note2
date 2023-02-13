@@ -1,0 +1,330 @@
+死灵书的关于 lifetime 的那些章节帮助从理论上理解 lifetime
+以下这篇文章讲了很多 lifetime 的使用细节
+https://github.com/pretzelhammer/rust-blog/blob/master/posts/common-rust-lifetime-misconceptions.md
+
+* 特殊的泛型
+Lifetimes are another kind of generic that we've already been using.
+Rather than ensuring that a type has the behavior we want, lifetimes ensure that references are valid as long as we need them to be.
+
+* 定义
+Lifetimes are named regions of code that a reference must be valid for T
+
+解读:
+1. lifetime 是关于 T 的 lifetime, 用来标记 &T, &mut T (也可以是包含它们的 struct 等) 的有效范围
+2. lifetime 可以有多个, 可以重叠, 通过 borrow checker 来判断所有这些 lifetimes 合在一起是否合法
+
+NOTE: 上面的 T 不一定是 owned type, 也可以是 reference
+#+begin_src rust
+fn main() {
+    let a = 5;
+    let mut b = &a;
+    let c = &mut b;
+    *c = &42;
+    dbg!(a, c);
+}
+#+end_src
+
+* 相同的入参 lifetime, 比如 'a 的含义 (以 longest 函数为例)
++ 'a 并不表示 x, y 的 lifetime 一样
++ 'a 其实是被标记为 'a 的入参的 lifetime 的最小值
+
+作为 x 的 lifetime, &'a 是一个泛型有一个最长的范围, 作为 y 的 lifetime 也有, 两个都满组的当然是它们中的最小值
+
+#+begin_src rust
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() {
+        x
+    } else {
+        y
+    }
+}
+#+end_src
+
+* 哪些类型或地方需要 (可以) 标记 lifetime
+1. references: &'a T, &'a mut T
+2. types contains references: T<'a, 'b>
+3. lifetime bound: T: 'a, T: Trait + 'a, 'a: 'b
+4. trait object: Box<dyn Trait + 'a>
+
++ 加 'a 是通过加 lifetime 让 borrow checker 帮忙确保正确的使用范围
++ 注意 T<'a> 和 T: 'a 的区别, 前者包含有 'a 限制的字段使得 T 的使用范围不能超过 'a, 而后者的意思是 T 至少 (甚至可以是无限长 owned) 在 'a 都是可以正常使用的
+
+* 一些规则
+1. each let (and function call) will implicitly introduces a scope
+2. borrow checker always tries to minimize the extent of a lifetime
+3. passing references to outer scopes will cause Rust to infer a larger lifetime
+4. a reference is alive from the place it is created to its last use
+
+** 1, 3 两点例子
+#+begin_src rust
+fn main() {
+    let x = 0;
+    let z;
+    let y = &x;
+    z = y;
+
+    // desugar
+    'a: {
+	let x: i32 = 0;
+	'b: {
+            let z: &'b i32;
+            'c: {
+		let y: &'b i32 = &'b x; // pass ref to outer, extend 'c to 'b
+		z = y;
+            }
+	}
+    }
+}
+#+end_src
+
+** 第 4 点的一个有趣的例子 (drop)
+#+begin_src rust
+#[derive(Debug)]
+struct X<'a>(&'a i32);
+
+impl Drop for X<'_> {
+    fn drop(&mut self) {}
+}
+
+fn main() {
+    let mut data = vec![1, 2, 3];
+    let x = X(&data[0]);
+    println!("{:?}", x);
+    data.push(4);
+    // implicitly call drop(x), so extend &data[0] lifetime to here
+}
+#+end_src
+
+** 第 3 点的变种? (reborrow)
+把函数参数 &mut foo 的 lifetime 扩大到 'c
+loan 虽然是 immutable reference, 但它占用的确是 mutable reference, 虽然 &mut foo 在函数外已不存在, 但函数的定义要求其 mutable reference 的 lifetime 至少要和 loan 一样
+reborrow 后面还有例子会讲到, 事实上 reborrow immutable reference on a mutable reference 基本没用, 除了防止手动修改?
+
+#+begin_src rust
+#[derive(Debug)]
+struct Foo;
+
+impl Foo {
+    fn mutate_and_share(&mut self) -> &Self { &*self }
+    fn share(&self) {}
+}
+
+fn main() {
+    let mut foo = Foo;
+    let loan = foo.mutate_and_share();
+    foo.share();
+    println!("{:?}", loan);
+}
+
+fn main() {
+    'b: {
+        let mut foo: Foo = Foo;
+        'c: {
+            let loan: &'c Foo = Foo::mutate_and_share::<'c>(&'c mut foo);
+            'd: {
+                Foo::share::<'d>(&'d foo);
+            }
+            println!("{:?}", loan);
+        }
+    }
+}
+#+end_src
+
+* Lifetime Elision
+1. Each elided lifetime in input position becomes a distinct lifetime parameter
+2. If there is exactly one input lifetime position (elided or not), that lifetime is assigned to all elided output lifetimes
+3. If there are multiple input lifetime positions, but one of them is &self or &mut self, the lifetime of self is assigned to all elided output lifetimes
+
+一般函数返回值的 lifetime 除了 'static 都是 derive from inputs 的 (否则称为 unbounded, 没遇到过)
+derive 可以是入参本身的 lifetime 也可以是其字段的 lifetime 等
+
+* lifetime bound 'a: 'b
+读作 'a outlive 'b, 意思是 'a 的作用域至少和 'b 一样长
+记忆: 类比 T1: T2 supertrait, 满足 T2 是满足 T1 的必要条件
+
+* &'a T VS T: 'a
+** &'static T
+这个的意思是 T 拥有 static lifetime, 需要 T 存活直到程序结束, T 可以是写入 binary 的 str, static 变量, 也可以通过内存泄漏在运行时构造
+
+#+begin_src rust
+fn make_static_ref_at_runtime(i: u64) -> &'static str {
+    Box::leak(i.to_string().into_boxed_str())
+}
+#+end_src
+
+** T: 'static
+这个的意思是只要 T **可以** 存活任意长的时间而不依赖其他变量，所以只要 T 的所有字段都是 'static reference 或 owned 的就行
+
+读作: T is bounded by a 'static lifetime
+
+#+begin_src rust
+fn owned_type_share_static_lifetime<T: std::fmt::Debug + 'static>(t: T) {
+    dbg!(t);
+}
+
+fn main() {
+    let a = String::from("Just a simple owned type");
+    owned_type_share_static_lifetime(a); // it's ok
+}
+#+end_src
+
+** &'a T VS T: 'a
++ &'a T 其实是隐含了 T: 'a, 只有这样 T 才可以有 'a 这样长的 lifetime
++ T: 'a 的所有字段都是 lifetime >= 'a 或 owned
+
+* 不要过于乱省略或乱标, 不要过于依赖编译器
+** 乱标的例子
+按照我们之前理解, 函数里的 &'a mut self 说的是: 在 'a 内这个 &mut obj 都有效
+再看看 'a 是什么, 'a 是 i32 的 lifetime, NumRef<'a> 说的是 NumRef 的 lifetime 不超过 'a, 满足这样条件的 'a 只有一个
+那么问题来了, 直到最后一行 obj 都有效, 那么两个 &mut obj 也需要都有效
+解决方法: 把函数中的 'a 去掉或换成别的字母
+#+begin_src rust
+struct NumRef<'a>(&'a i32);
+
+impl<'a> NumRef<'a> {
+    fn fn_need_exclude_ref(&'a mut self) {
+	// do something
+    }
+}
+
+fn main() {
+    let mut obj = NumRef(&5);
+    obj.fn_need_exclude_ref();
+    obj.fn_need_exclude_ref();
+}
+#+end_src
+
+** 乱省略的例子
+以下函数补全后是这样的: fn next<'b>(&'b mut self) -> Option<&'b u8> (NOTE: is 'b not 'a)
++ main 的最后一行用了 byte1 和 byte2, 而 byte1 等的 lifetime 依赖调用 next 是的临时生成的 &mut bytes
++ reference 临时变量并不会像 owned 临时变量一样用完就 drop, 只要满足 borrow checker 可以任意长
++ 综上, 在 main 最后一行我们需要两个 mutable borrow
+解决方法: 为返回值添上 lifetime 'a
+
+#+begin_src rust
+struct ByteIter<'a> {
+    reminder: &'a [u8],
+}
+
+impl<'a> ByteIter<'a> {
+    fn next(&mut self) -> Option<&u8> {
+        if self.reminder.is_empty() {
+            None
+        } else {
+            let byte = &self.reminder[0];
+            self.reminder = &self.reminder[1..];
+            Some(byte)
+        }
+    }
+}
+
+fn main() {
+    let mut bytes = ByteIter { reminder: b"1123" };
+    let byte1 = bytes.next();
+    let byte2 = bytes.next();
+    assert_eq!(byte1, byte2);
+}
+#+end_src
+
+* Lifetime elision in trait object
+trait object 都是有 lifetime 的, 如果没有 lifetime 就可以省略 + 'static, 如果有唯一的 lifetime 'a 就可以省略 + 'a
+
+第一个函数其实是省略了 + 'static, (多线程无法确定完成的顺序, 所以为了避免 UAF 需要 'static lifetime)
+#+begin_src rust
+use std::fmt::Display;
+
+fn dynamic_thread_print(t: Box<dyn Display + Send>) {
+    std::thread::spawn(move || {
+        println!("{}", t);
+    }).join();
+}
+
+fn static_thread_print<T: Display + Send + 'static>(t: T) {
+    std::thread::spawn(move || {
+        println!("{}", t);
+    }).join();
+}
+#+end_src
+
+* 悲观的 borrow checker
+#+begin_src rust
+struct Has<'lifetime> {
+    lifetime: &'lifetime str,
+}
+
+fn main() {
+    let long = String::from("long");
+    let mut has = Has { lifetime: &long };
+    assert_eq!(has.lifetime, "long");
+
+    // this block will never run
+    if false {
+        let short = String::from("short");
+        // "switch" to short lifetime
+        has.lifetime = &short;
+        assert_eq!(has.lifetime, "short");
+
+        // "switch back" to long lifetime (but not really)
+        has.lifetime = &long;
+        assert_eq!(has.lifetime, "long");
+        // `short` dropped here
+    }
+
+    assert_eq!(has.lifetime, "long"); // Can not compile - `short` still "borrowed" after drop
+}
+#+end_src
+
+* reborrow (downgrade &mut T to &T)
+有以下三种方法可以完成 &mut T 到 &T 的转变, 这样做的后果是转变后的 &T 的 lifetime 里相当于 &mut 仍然存在, 不能再有别的 immutable borrow
+所以除非是类方法的 receiver 的限定 (此时也是自动转的, 不用手动加以下的代码), 否则没必要这么做
+
+#+begin_src rust
+fn reborrow<T>(x: &mut T) -> &T {
+    x
+}
+
+fn main() {
+    let mut a = "hello".to_string();
+    let b = reborrow(&mut a);
+    let c = &mut a as &String;
+    let d = &*(&mut a);
+    // dbg!(b, c, d);
+}
+#+end_src
+
+** 隐藏在函数调用里的 reborrow
+编译不能通过, 因为隐式地使用了 reborrow
+#+begin_src rust
+fn main() {
+    let mut dct: std::collections::HashMap<_, _> = vec![1, 2, 3]
+	.into_iter()
+	.zip(vec!["one", "two", "three"])
+	.collect();
+
+    let s1 = dct.entry(2).or_default();
+    let s2 = dct.entry(4).or_default();
+    assert_ne!(s1, s2);
+}
+#+end_src
+
+修改, 虽然看起来是有点别扭
+#+begin_src rust
+fn main() {
+    let mut dct: std::collections::HashMap<_, _> = vec![1, 2, 3]
+	.into_iter()
+	.zip(vec!["one", "two", "three"])
+	.collect();
+
+    dct.entry(2).or_default();
+    dct.entry(4).or_default();
+    let s1 = dct.get(&2);
+    let s2 = dct.get(&4);
+    assert_ne!(s1, s2);
+}
+#+end_src
+
+** 死灵书对此的解释 (lifetime extend)
+https://doc.rust-lang.org/nomicon/lifetime-mismatch.html
+
+* for<'a> and closure with lifetime
+高阶用法, 没看懂, 短时间内应该是用不到

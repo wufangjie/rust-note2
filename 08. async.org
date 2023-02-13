@@ -1,0 +1,28 @@
+https://rust-lang.github.io/async-book/
+
+以下给出描述性的解释 (可能有些不严谨), 有个大致的概念
+* future (impl Future<Output = YouExpect>)
+1. 可以期望最终会得到一个结果 Output
+2. 它是 lazy 的 (即如果不 poll 它, 它不会尝试 make progress)
+3. 被 drop 的话 future 里后续的代码都不会再运行
+4. async function 是 future 最常见的形式
+
+* yield (协程)
+1. 在调用异步的时候 (比如 io), 当前 future 会 yield 出运行权, 好让其他 future 可以 make progress
+2. 异步调用完成后, 如果没有运行权的话是不能继续运行后续代码的, 只能调用 waker 让 executor 来 poll 自己后才能继续
+
+* executor
+yield 出的运行权由谁来接管, 一般是上一层, 但最顶层的通常只是一个 block_on, 如果没有 executor 的话运行权没法向下传递
+
+* poll/waker
+1. 由 executor 发起, 作用是让对应的 future 尝试 make progress, 如果暂时还得不到结果就留一个 waker, 好让 future 在可以 make progress 时 (即当前在跑的异步完成) 通知 executor 再来 poll 自己
+2. 一个 future 第一次开始运行的时候会被 poll 一次
+
+* 异步策略 await/join/try_join/select
+1. await: 等待直到该异步完成 (线性)
+2. join: 等待所有 join 的异步完成
+3. try_join: 等待所有 try_join 的异步完成, 若遇到某个 future 结束返回 Err 则会提前结束
+4. select: 等待直到 select 的异步中有一个完成 (通常会在外面套一个 loop 来实现更复杂的逻辑)
+
+* pin
+async block 或 async function 都是一个 impl Future type, 所以代码里的变量以及它们的引用就构成了一个自引用结构, 自引用结构如果 move 就会带来 UB, pin 就是用来解决这个问题的

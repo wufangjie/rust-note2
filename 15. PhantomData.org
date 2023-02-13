@@ -1,0 +1,33 @@
+TODO: 并不是很完善
+
+
+https://doc.rust-lang.org/nomicon/phantom-data.html
+https://doc.rust-lang.org/std/marker/struct.PhantomData.html
+
+Zero-sized type used to mark things that "act like" they own a T.
+
+Adding a PhantomData<T> field to your type tells the compiler that your type acts as though it stores a value of type T, even though it doesn’t really. This information is used when computing certain safety properties.
+
+* 两种用法
+1. Adding a field of type PhantomData<T> indicates that your type owns data of type T. This in turn implies that when your type is dropped, it may drop one or more instances of the type T. This has bearing on the Rust compiler’s drop check analysis.
+
+2. If your struct does not in fact own the data of type T, it is better to use a reference type, like PhantomData<&'a T> (ideally) or PhantomData<*const T> (if no lifetime applies), so as not to indicate ownership.
+
+* 例子
+Slice<T> 和 T 建立不了关系, borrow checker 无能为力, 以下代码能编译通过, 不过会取到非法值
+#+begin_src rust
+struct Slice<T> {
+    start: *const T,
+    end: *const T,
+}
+
+fn main() {
+    let a = vec![1, 2, 3, 4, 5];
+    let b = Slice {
+        start: &a[0] as *const i32,
+        end: &a[4] as *const i32,
+    };
+    drop(a);
+    unsafe { println!("start: {}, end: {}", *b.start, *b.end) };
+}
+#+end_src

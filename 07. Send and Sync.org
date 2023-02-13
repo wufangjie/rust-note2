@@ -1,0 +1,93 @@
+* auto trait
+意思就是: 如果子类型实现了该 trait, 那么自动为其实现该 trait, 除非手动不指定实现
+具体定义可以看: https://doc.rust-lang.org/reference/special-types-and-traits.html#auto-traits
+
+#+begin_src rust
+pub unsafe auto trait Send {
+    // empty.
+}
+
+pub unsafe auto trait Sync {
+    // empty.
+}
+
+#[lang = "unpin"]
+pub auto trait Unpin {}
+#+end_src
+
+* marker trait
+std::marker Send, Sync, Sized, Unpin, Copy
+
+* 定义
+Send: 可以安全地在线程间转移所有权
+Sync: T is Sync if and only if &T is Send (T 是 Sync 的定义就是可以安全地在线程间传递 (Send) &T)
+
+NOTE: Send 是有前提的, 比如 borrow checker, 有 borrowed 就不能 send, 所以判断 send 是否安全的时候不能考虑线程还有 borrow 的情况
+
+而 Rc 确实都是 owned, 即使没有 &Rc 这种, 它们 Send 之后, 会有 data race
+
+* !Send and !Sync types
++ Rc
++ raw pointer 可以是任意类型的指针, 如果那个是 !Send 或 !Sync, 那么解引用也是
++ NonNull 同 raw pointer
+
+* !Send but (auto) Sync types
++ MutexGuard
++ RwLockReadGuard
++ RwLockWriteGuard
+
+because lock and release in differnt threads are supposed to be UB
+
+* !Sync but (auto) Send types
++ Cell
++ RefCell
++ UnsafeCell
+
+NOTE: SyncUnsafeCell 是 Sync, 其代码和 UnsafeCell 完全一样, 需要用户手动保证同步
+
+* &T and &mut T
+#+begin_src rust
+impl<T> Send for &T
+where
+    T: Sync + ?Sized
+
+impl<T> Send for &mut T
+where
+    T: Send + ?Sized
+#+end_src
+第一个其实就是 Sync 的定义
+第二个有点类似 (或者就是?) auto trait
++ 必要性: std::mem 的一大堆置换相关的黑魔法存在, 所以只要得到了 &mut T 就能达到和 Send T 同样的效果
++ 充分性: Send 之后可以通过 &mut 直接得到
++ 事实上: 好像无法直接 Send &mut T
+
+* Cell is Send but not Sync, &Cell is not Send
+* 违反自动实现的情况 (结合以上的特例来理解就很简单)
+** Arc<T>, std::sync::Weak<T> need T: Sync + Send
+#+begin_src rust
+impl<T> Sync for Arc<T>
+where
+    T: Sync + Send + ?Sized, // need Send because of Arc<SomeGuard> + Arc::get_mut
+
+impl<T> Send for Arc<T>
+where
+    T: Sync + Send + ?Sized, // need Sync because of Arc<Cell<T>>
+#+end_src
+
+** struct, if its all fields are references
+#+begin_src rust
+impl<'a, A> Send for std::option::Iter<'a, A>
+where
+    A: Sync
+#+end_src
+
+** Mutex and RwLock
+#+begin_src rust
+impl<T: ?Sized + Send> Sync for Mutex<T>
+impl<T: ?Sized + Send + Sync> Sync for RwLock<T>
+#+end_src
+
++ 为什么需要 T: Send, 因为 lock()/write() 能得到 &mut T (deref a guard) 然后 T (* or using std::mem)
++ 为什么不需要 T: Sync, 因为锁的存在保证只有一个线程能得到 &T, 从而不会有 data race
++ 同上 RwLock 需要 T: Sync (因为 T 可能是 Cell, 可以通过不可变引用的 read 改变内部)
++ 需要特别说明的是, MutexGuard 虽然实现了 DerefMut 可以得到 &mut T, 从而得到 T, 但是别忘了 DerefMut 的参数是 &mut self, 也就是不可能在 Sync 共享时取到 (这个和 Mutex 有很大区别)

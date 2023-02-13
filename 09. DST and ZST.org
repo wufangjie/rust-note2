@@ -1,0 +1,33 @@
+* DST
+** rules
++ we cannot know how long a DST is until runtime
++ we cannot create a variable of type DST
++ we cannot take an argument of type DST
+
+Golden Rule: we must always put values of dynamically sized types behind a pointer of some kind
+
+** examples of dst
++ [T]
++ str (str is a DST, while &str is slice)
++ trait object
+
+** size_of_val VS size_of::<&DST>
+#+begin_src rust
+use std::fmt::Display;
+use std::mem::{size_of, size_of_val};
+
+fn main() {
+    assert!(vec![
+        &1i8 as &dyn Display,
+        &2i64 as &dyn Display,
+        &3i128 as &dyn Display,
+    ]
+    .into_iter()
+    .map(|x| size_of_val(x))
+    .eq([1, 8, 16]));
+    assert_eq!(size_of::<&u8>() * 2, size_of::<&dyn Display>());
+}
+#+end_src
+
+* ZST
+https://runrust.miraheze.org/wiki/Zero-sized_type

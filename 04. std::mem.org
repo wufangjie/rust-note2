@@ -1,0 +1,121 @@
+* swap, replace, take
+各种置换 (底层实现是指针的读写)，非常强大, 但也因此带来了很多问题
+1. &mut T 如果是 Send 的, 那么 T 也是 Send, 因为通过 swap/replace/take 可以用 &mut T 得到 T; 实际上好像不能直接 send &mut T, 只能先 send T 再取 &mut
+2. Pin 的引入也是因为 swap 包含自引用的 struct 时, 引用不会跟着 swap, 会导致 UB
+
+* size_of, size_of_val
+学习或 debug 时经常会用到的功能, 获取类型/变量的大小
+
+* drop, forget, ManuallyDrop
+** drop and forget
++ drop: call variable's destructor
++ forget: take onwership without calling drop()
+
+#+begin_src rust
+pub fn drop<T>(_x: T) {} // take ownership
+
+pub const fn forget<T>(t: T) {
+    let _ = ManuallyDrop::new(t);
+}
+#+end_src
+
+** ManuallyDrop
++ 为数不多的 rust 魔法之一, 编译器开的后门导致 T 不会被析构
++ 它实现了 Deref 和 DerefMut, 能直接调 T 的方法, 所以其他的函数都定义为了 associated functions
++ 一般如果想让编译器再度接管的话用 into_inner()
+
+#+begin_src rust
+#[lang = "manually_drop"] // the magic attribute
+pub struct ManuallyDrop<T: ?Sized> {
+    value: T,
+}
+
+impl<T: ?Sized> const Deref for ManuallyDrop<T> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+pub const fn new(value: T) -> ManuallyDrop<T>;
+pub const fn into_inner(slot: ManuallyDrop<T>) -> T;
+pub unsafe fn take(slot: &mut ManuallyDrop<T>);
+pub unsafe fn drop(slot: &mut ManuallyDrop<T>);
+#+end_src
+
+** Box::leak
+#+begin_src rust
+pub const fn leak<'a>(b: Self) -> &'a mut T
+where
+    A: 'a,
+{
+    unsafe { &mut *mem::ManuallyDrop::new(b).0.as_ptr() }
+}
+#+end_src
+
+** 其他间接调用
++ Rc::new
++ Arc::new
++ Vec::into_iter
+
+* transmute
+这个也是在学习或 DEBUG 时比较有用
+1. 比如获取某个 struct 的私有字段
+2. 做一些非正常的转换 (不能用 as 的情况, 比如 usize 到 fn(&i32)), 这样还可以用来探索比如 vtable 的结构
+
+** 探索 Vec 内部结构
+#+begin_src rust
+fn main() {
+    let mut lst = Vec::with_capacity(10);
+    lst.push("hello");
+    lst.push("world");
+
+    let (p, cap, len) = unsafe { std::mem::transmute::<Vec<&str>, (usize, usize, usize)>(lst) };
+    println!("0x{:x}", p); // it's on heap
+    let p2 = p as *const &str;
+    assert_eq!("hello", unsafe { *p2 });
+    assert_eq!("world", unsafe { *p2.offset(1) });
+    assert_eq!(10, cap);
+    assert_eq!(2, len);
+}
+#+end_src
+
+** 探索 vtable
+#+begin_src rust
+use std::mem::transmute;
+
+trait Foo {
+    fn bar(&self);
+
+    fn baz(&self)
+    where
+        Self: Sized;
+
+    fn qux(&self) {
+        println!("calling qux: blanket implementation");
+    }
+}
+
+impl<T: std::fmt::Debug> Foo for T {
+    fn bar(&self) {
+        println!("calling bar: {:?}", self);
+    }
+
+    fn baz(&self) {
+        println!("calling baz: {:?}", self);
+    }
+}
+
+fn main() {
+    let x: Box<dyn Foo> = Box::new(42);
+    unsafe {
+	let (pdata, vtable) = { transmute::<Box<dyn Foo>, (*const i32, *const usize)>(x) };
+	assert_eq!(42, *pdata);
+	let f_bar = transmute::<usize, fn(&i32)>(*vtable.offset(3));
+	f_bar(&*pdata);
+	let f_qux = transmute::<usize, fn(&i32)>(*vtable.offset(4));
+	f_qux(&*pdata);
+    }
+}
+#+end_src

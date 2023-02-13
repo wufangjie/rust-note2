@@ -1,0 +1,50 @@
+https://doc.rust-lang.org/reference/types/closure.html
+
+* fn item
+也就是函数名, size 为 0, 可以转成 fn pointer
+
+* closure
+1. 每一个 closure 都是不同的类型 (即使参数返回值函数体完全相同)
+2. 可以捕获外部的状态
+3. 只有未捕获外部状态时可以转成 fn pointer
+4. closure 不支持递归
+
+* move
+move 关键字只改变变量的捕获方式, 不改变 closure 实现 Fn/FnMut/FnOnce 的推导
+#+begin_src rust
+fn main() {
+    let mut a = vec!["hello", "world"];
+
+    let b = move || {
+	println!("{:?}", a); // Fn
+	//a.push("rust"); // FnMut, 取消注释看编译器的提示
+	//drop(a); // FnOnce, 取消注释看编译器的提示
+    };
+
+    let c = &b as &dyn Fn();
+}
+#+end_src
+
+* 转换
+不同于变量的 owner variable -> mutable reference -> immutable reference
+即通过 owner 变量我们可以得到 &mut, 进一步可以转化为 &
+
+closure 从实现的角度看反过来的 Fn() -> FnMut() -> FnOnce()
+从依赖 (super trait) 的角度看还是同方向, 实际使用多数是从上一个角度来看
+
+#+begin_src rust
+pub trait FnOnce<Args> { /* ... */ }
+pub trait FnMut<Args>: FnOnce<Args> { /* ... */ }
+pub trait Fn<Args>: FnMut<Args> { /* ... */ }
+#+end_src
+
+* Fn
+receiver 是 &self, 且最多会用到外部的 immutable reference, 多次/同时调用都不会有问题
+
+* FnMut
+receiver 是 &mut self, 会用到外部的 mutable referece, 也就是要求同一时间只能出现一个调用
+
+显然可以调用多次的 Fn 满足这个要求 (同一时间只出现一个调用), 而满足 FnMut 的不一定能满足 Fn 的要求
+
+* FnOnce
+receiver 是 self, 是 consume 的, 所以只能调用一次

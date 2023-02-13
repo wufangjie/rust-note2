@@ -1,0 +1,93 @@
+Ownership is Rust's most unique feature and has deep implications for the rest of the language.
+It enables Rust to make memory safety guarantees without needing a garbage collector
+ownership system 主要是三个方面: ownership, borrowing, lifetime
+
+https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html
+
+* Ownership Rules
+1. Each value in Rust has a variable that's called its owner.
+2. There can only be one owner at a time.
+3. When the owner goes out of scope, the value will be dropped.
+
+* shadowing (re-let)
+shadowing 对编程舒适度提升很大, 但也有一些特殊情况要注意
++ 每次 shadowing 都会开辟新的空间 (即使新旧值类型完全一样)
++ shadowing 不会 drop 旧值
++ scoped shadowing 结束时, 被 shadow 的旧值会恢复
+
+#+begin_src rust
+struct PrintOnDrop(&'static str);
+
+impl Drop for PrintOnDrop {
+    fn drop(&mut self) {
+	println!("{}", self.0);
+    }
+}
+
+fn main() {
+    let obj = PrintOnDrop("drops the old value");
+    let obj = PrintOnDrop("overwrite will not drop the old value");
+    println!("out of scope");
+}
+#+end_src
+
+* transfer ownership (move)
+** 前提
+只有非 Copy (或者说 stack-only) 的数据才能 transfer ownership, NOTE: &T, &mut T 是栈上的指针当然也不能
+
+** 方式
++ 赋值
++ 函数调用 (rust 的传参都属于值传递, 传引用其实也是栈上指针的传递)
+
+** 内存的变化
+表现为栈上数据 move (copy) (这个 move 貌似是不能避免的), 堆上数据不动
+
+** mutability
+move 的时候可以改变变量的 mutability
+
+** partial move
+struct 字段享有独立的 ownership, 所以可以 partial move out, 只是这样做之后不能再使用完整的 struct 对象, 使用没有 move out 的字段是可以的
+
+** drop when move
+#+begin_src rust
+struct PrintOnDrop(&'static str);
+
+impl Drop for PrintOnDrop {
+    fn drop(&mut self) {
+	println!("{}", self.0);
+    }
+}
+
+fn main() {
+    let mut obj = PrintOnDrop("drops when overwritten");
+    obj = PrintOnDrop("drops when moved (path statemet)"); // 这里会 drop 旧值
+    obj; // 这里会 drop, 但是会有 path statement warning, 而且容易忽略, 所以推荐用更直接的 drop(obj);
+    println!("out of scope");
+}
+#+end_src
+
+* temporary variable 及其作用域扩大
+** 临时变量有临时的 owner, 当前语句执行完就会被 drop
+一个常用的方式是用临时变量获取锁进行一些操作, 然后操作结束后就会释放锁, 而不用手动释放或引入 scope
+#+begin_src rust
+use std::rc::Rc;
+
+fn main() {
+    let a = Rc::new(5);
+    Rc::clone(&a); // temporary
+    assert_eq!(1, Rc::strong_count(&a));
+}
+#+end_src
+
+** 临时变量作用域扩大
+https://doc.rust-lang.org/reference/destructors.html#temporary-lifetime-extension
+https://users.rust-lang.org/t/how-to-understand-temporary-lifetime-extension-correctly/70503/7
+
+具体规则可能还会改, 而且太细, 知道有这种情况遇到了再查不迟,
+NOTE: 能扩大的只能是 let binding 或类似的 pattern, 比如作为函数参数
+#+begin_src rust
+fn main() {
+    let mut s = &String::from("hello"); // works
+    s = &String::from("world"); // not work
+}
+#+end_src

@@ -1,0 +1,83 @@
+* Reference Rules (Borrowing Rules)
+1. At any given time, you can have either one mutable reference or any number of immutable references.
+2. References must always be valid.
+
+NOTE: valid means:
+1. reference can not outlive its owner, i.e. ref's scope is not longer than its owner's (another saying: reference is not dangling)
+2. cannot borrow immutable value as mutable
+
+* T, &T, &mut T
++ T, 可以是任意类型, 包括 &T, &mut T 和 owned types
++ &T 和 &mut T 是正交关系
+
+#+begin_src rust
+trait Trait {}
+impl<T> Trait for T {}      // 只去掉这句可以通过编译
+impl<T> Trait for &T {}     // 只去掉这句不行
+impl<T> Trait for &mut T {} // 只去掉这句也不行
+#+end_src
+
+* 可能不对的理解
+我们不能为 &T impl Drop, 也就是清理它们时不需要额外操作 (区别于 owned), 也就是可以认为它们到最后一次使用后就 "析构" 了 (事实上 borrow check 的 lifetime 就是这么取的)
+
+最后一次使用的具体位置可能会比较复杂:
+1. 用赋值转移了所有权
+2. 函数调用 (通过返回值 lifetime 的约束和返回值的最后一次使用来扩大之前的 lifetime)
+3. 有分支的情况, 每个分支的最后一次使用都需要考虑, 即使某些分支不可能运行
+
+#+begin_src rust
+fn main() {
+    let mut x = "hello".to_string();
+    if true {
+	println!("always here");
+    } else {
+	let y = &x;
+	x.push_str(", world");
+	dbg!(y);
+    }
+}
+#+end_src
+
+* old rustc
+下面的例子之前的 rustc 是无法编译通过, 现在的已可以
+https://doc.rust-lang.org/1.8.0/book/references-and-borrowing.html
+#+begin_src rust
+fn main() {
+    let mut x = 5;
+    let y = &mut x;
+    *y += 1; // ref y last used here, 而旧的 rustc 会保留 y 到最后
+    println!("{}", x);
+}
+#+end_src
+
+#+begin_src rust
+fn main() {
+    let y: &i32; // declare y before x did not influence assign &x to y now
+    let x = 5;
+    y = &x;
+    println!("{}", y);
+}
+#+end_src
+
+* reborrow vs borrow a reference
+#+begin_src rust
+fn main() {
+    let mut owned = 5;
+    let borrow = &mut owned;
+    let reborrow = &*borrow;
+    let borrow_a_ref = &borrow;
+    dbg!(reborrow, borrow_a_ref, &borrow);
+}
+#+end_src
+
+可以认为上面的 reborrow  是 borrow 了 borrow, 同时又 mutably borrow 了 owned?
+
+borrow_a_ref 只需要考虑前者? 如果改成 &mut 那么和下面的 &borrow 就冲突了
+
+上面的例子是从这个链接来的 https://doc.rust-lang.org/nomicon/lifetime-mismatch.html, 不过把函数调用改了
+
+结论: 目前所知的所有情况都不要使用 reborrow
+
+* ref keyword
+ref 用于 destructure 来构造 reference, 注意比较 &
+https://doc.rust-lang.org/rust-by-example/scope/borrow/ref.html

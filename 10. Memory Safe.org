@@ -1,0 +1,39 @@
+* 分类
+| 悬垂指针 | dangling pointer |
+| UAF      | Use After Free   |
+|          | double free      |
+| 未初始化 |                  |
+| 空指针   |                  |
+| 越界访问 | Out Of Bounds    |
+| 内存溢出 | Out Of Memory    |
+| 内存泄漏 | memory leak      |
+|          | data race        |
+| 栈溢出   | stack overflow   |
+
+* 说明
+rust 能解决的也不是所有的内存安全问题, 而是近年来频率最高的一些
+
+* data race and race condition
+https://blog.regehr.org/archives/490
+
+** data race
+两种形式, 以两个线程为例:
+1. 同时读写 (且至少一个写) (比如: 写了一半被读, 或分别写入了数据的不同部分, 造成不合法数据, UB)
+2. 都要读写但不是同时 (且写的内容和读到的数据有关, 比如为原始数据+x) (但写之前没有进行数据同步, 用的是很久之前读到的数据)
+
+解决方法: 互斥锁或读写锁
+
+** race conditon
+和执行顺序有关的非 data race 造成的错误
+
+解决方法: 改用单线程, 或重新设计流程, 或用状态机
+
+** 两者的关系
+|              | Race Condition | no Race Condition |
+| Data Race    |                |                   |
+| no Data Race |                |                   |
+
+1. 两者相互独立, 以上四种情况都可能存在, 但很多时候它们都是同时出现的
+2. rust 能解决的是 data race
+3. data race 属于 UB
+4. 可以看看这一节最开始的 url 给出的四种情况的例子

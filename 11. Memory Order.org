@@ -1,0 +1,7 @@
+主要是解决为了效率引入的编译器代码乱序和 cpu 缓存同步问题
+
+这篇文章结合硬件讲的非常好
+https://www.cnblogs.com/ishen/p/13200838.html
+
+| store_buffer     | release |
+| invalidate_queue | acquire |

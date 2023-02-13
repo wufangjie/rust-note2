@@ -1,0 +1,20 @@
+https://zhuanlan.zhihu.com/p/33252691?utm_id=0
+https://doc.rust-lang.org/reference/type-layout.html
+
+变量的起始地址都必须是它的 align 的整数倍, 否则就是访问 unaligned address, 就会报错
+
+align 最小是 1, 且都是 2 整数次幂,
+复合型数据的 align 的设置一般需要兼顾效率(读取次数)和空间的浪费
+ZST 的 align 一般是 1, 但可以设置成别的, 这也是下面链接里讨论的 bug 出现的原因
+https://doc.rust-lang.org/nomicon/vec/vec-zsts.html
+
+#+begin_src rust
+#[repr(C, align(8))]
+struct Empty;
+
+fn main() {
+    dbg!(std::mem::align_of::<Empty>());
+    dbg!(std::mem::size_of::<Empty>());
+    dbg!(std::mem::align_of::<()>());
+}
+#+end_src
