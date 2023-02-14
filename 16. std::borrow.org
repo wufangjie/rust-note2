@@ -1,0 +1,173 @@
+* Borrow/BorrowMut trait
+** 定义
+#+begin_src rust
+trait Borrow<Borrowed: ?Sized> {
+    fn borrow(&self) -> &Borrowed;
+}
+
+trait BorrowMut<Borrowed: ?Sized>: Borrow<Borrowed> {
+    fn borrow_mut(&mut self) -> &mut Borrowed;
+}
+#+end_src
+
+** 用法, 以 std::collections::HashMap 为例
+假设我们要实现 HashMap<K, V> 的 get() 接口, 我们可以想到最 straight-forward 的两种实现
+#+begin_src rust
+impl<K: Eq + Hash, V> HashMap<K, V> {
+    pub fn get_owned(&self, k: K) -> Option<&V> {...}
+}
+
+impl<K: Eq + Hash, V> HashMap<K, V> {
+    pub fn get_ref(&self, k: &K) -> Option<&V> {...}
+}
+#+end_src
+
+第一种每次都要构造新的对象, 显然不可取, 但第二种其实也有问题, 比如一种很常见的 K=String 的情况, 我们都需要 &String, 如果能像 deref 那样能用 &str 就好了, 答案就是用 Borrow
+
+#+begin_src rust
+impl<K: Eq + Hash, V> HashMap<K, V> {
+    // NOTE: this ?Sized is important, a common case: str is DST
+    pub fn get_borrowed<Q: ?Sized>(&self, k: &Q) -> Option<&V>
+    where
+	K: Borrow<Q>,
+	Q: Eq + Hash,
+    {...}
+}
+#+end_src
+
+标准库的代码里只有: self.base.get(k), 但容易想到具体实现肯定是 k.borrow() 之后统一成 Q 然后再去 Hash 和比较, 看能不能找到
+
+** 隐含的要求
+看源码可以发现 HashMap 的 insert() 接口并没有要求 K: Borrow<Q> (事实上整个 HashMap 存的不是 key 而是它的 hash 值), 这就要求 hash(K) == hash(Q), 用以下代码验证
+#+begin_src rust
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+fn main() {
+    for word in ["hello", "world", "rust", "hash"] {
+        let mut hasher = DefaultHasher::new();
+        let h1s = hasher.finish();
+        word.hash(&mut hasher);
+        let h1f = hasher.finish();
+        let mut hasher = DefaultHasher::new();
+        let h2s = hasher.finish();
+        word.to_string().hash(&mut hasher);
+        let h2f = hasher.finish();
+        assert_eq!(h1s, h2s);
+        assert_eq!(h1f, h2f);
+        assert_ne!(h1s, h1f);
+    }
+}
+#+end_src
+
+** VS AsRef<T>
+和 Borrow<T> 很像, 都是 generic trait, 但我看 Borrow<T> 的文档, 除了覆盖全部的自己到自己的实现, 基本都只实现了一个目标类型, 而 AsRef<T> 则有很多, 这应该就是上面的隐含的要求的限制
+#+begin_src rust
+impl<T: ?Sized> const Borrow<T> for T { // NOTE: unstable const
+    fn borrow(&self) -> &T {
+	self
+    }
+}
+#+end_src
+
+* ToOwned trait
+** 定义
+#+begin_src rust
+trait ToOwned {
+    type Owned: Borrowed<Self>; // generic type's trait bound
+
+    fn to_owned(&self) -> Self::Owned;
+
+    fn clone_into(&self, target: &mut Self::Owned) {
+	*target = self.to_owned();
+    }
+}
+#+end_src
+
+** VS Clone
+Clone 只能解决 &T -> T 的拷贝, 外加一些特殊的 &str -> &str, &[T] -> &[T]
+ToOwned 可以是任意指定值, 可以实现 &str -> String, &[T] -> Vec<T>
+
+** for str
+#+begin_src rust
+impl ToOwned for str {
+    type Owned = String;
+
+    fn to_owned(&self) -> Self::Owned {
+	unsafe { String::from_utf8_unchecked(self.as_bytes().to_owned()) }
+	// 事实上 String::from(self) 调用的是 to_owned
+	// str.to_string() 调用的是 String::from()
+    }
+}
+#+end_src
+
+** for T: Clone
+NOTE: &str: Clone 所以 (&&str).to_owned() 返回的是 &str, 而不是 String (和 to_string 的区别)
+NOTE: 这个 impl 和上面的 str 的 impl 并不冲突, 因为 str 是 DST, 这里不是 T: ?Sized 所以不包括 str
+#+begin_src rust
+impl<T: Clone> ToOwned for T {
+    type Owned = T;
+
+    fn to_owned(&self) -> Self::Owned {
+	self.clone()
+    }
+}
+#+end_src
+
+* Cow enum (clone on write)
+** 定义
+#+begin_src rust
+pub enum Cow<'a, B: ?Sized + ToOwned> {
+    Borrowed(&'a B),
+    Owned(<B as ToOwned>::Owned) // 联系 &str 能更好地理解
+}
+#+end_src
+
+** immutable access
+无论何时, 都可以从 Cow 中得到 immutable reference, 并且因为 Cow impl 了 Deref 所以很方便
+#+begin_src rust
+impl<B: ?Sized + ToOwned> std::ops::Deref for Cow<'_, B>
+where
+    <B as ToOwned>::Owned: Borrow<B>,
+{
+    type Target = B;
+
+    fn deref(&self) -> &Self::Target {
+	match *self {
+	    Cow::Borrowed(borrowed) => borrowed,
+	    Cow::Owned(ref owned) => owned.borrow(),
+	}
+    }
+}
+#+end_src
+
+** to_mut
+NOTE: to_mut 的返回值类型采用的是 &mut <B as ToOwned>::Owned, 因为无论如何都需要有 Owned 所以直接用是最好的选择, 而不是还要一个 BorrowMut
+#+begin_src rust
+impl<B: ?Sized + ToOwned> Cow<'_, B> {
+    pub fn to_mut(&mut self) -> &mut <B as ToOwned>::Owned {
+        match *self {
+            Cow::Borrowed(borrowed) => {
+                *self = Cow::Owned(borrowed.to_owned());
+                match *self {
+                    // 不用递归, 以防万一陷入无限循环
+                    Cow::Borrowed(_) => unreachable!(),
+                    Cow::Owned(ref mut owned) => owned,
+                }
+            }
+            Cow::Owned(ref mut owned) => owned,
+        }
+    }
+}
+#+end_src
+
+** is_borrowed/is_owned
+用 match 简单实现即可
+
+** 例子
+看 Cow 官方文档的两个例子就够了
+
+* Summary
+** Borrow 是 generic trait, 因为会有一个平凡的 T->T 的实现, 如果不是 generic 就不能有其他实现
+** ToOwned 是 trait with associated type, 因为每个类型都应该只能有一个 owned type
+** Cow 是通过 Borrow 和 ToOwned 把两种类型结合起来, 实现了 &T, &mut T 和 T 的统一
