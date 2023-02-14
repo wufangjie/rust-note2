@@ -1,16 +1,21 @@
+https://doc.rust-lang.org/reference/types/function-item.html
 https://doc.rust-lang.org/reference/types/closure.html
+https://doc.rust-lang.org/rust-by-example/fn/closures.html
 
 * fn item
 也就是函数名, size 为 0, 可以转成 fn pointer
 
 * closure
-1. 每一个 closure 都是不同的类型 (即使参数返回值函数体完全相同)
+1. 每一个 closure 都是不同的类型 (即使参数返回值函数体完全相同) (ad-hoc)
 2. 可以捕获外部的状态
 3. 只有未捕获外部状态时可以转成 fn pointer
 4. closure 不支持递归
+5. fn pointer implement all three of closure traits (Fn, FnMut, FnOnce)
+6. closure types all implement FnOnce
 
 * move
-move 关键字只改变变量的捕获方式, 不改变 closure 实现 Fn/FnMut/FnOnce 的推导
+NOTE: move 关键字只改变变量的捕获方式, 不改变 closure 实现 Fn/FnMut/FnOnce 的推导
+用了 move 外面的就不能再用了, 不用的话, &T, &mut T 型捕获在最后一次 closure 调用后可用
 #+begin_src rust
 fn main() {
     let mut a = vec!["hello", "world"];
@@ -38,13 +43,64 @@ pub trait FnMut<Args>: FnOnce<Args> { /* ... */ }
 pub trait Fn<Args>: FnMut<Args> { /* ... */ }
 #+end_src
 
-* Fn
-receiver 是 &self, 且最多会用到外部的 immutable reference, 多次/同时调用都不会有问题
+* Fn, FnMut, FnOnce
++ Fn: 最多会用到外部的 immutable reference, 多次/同时调用都不会有问题
++ FnMut: 会用到外部的 mutable referece, 也就是要求同一时间只能出现一个调用
++ FnOnce: 会 consume 外部变量, 所以只能调用一次
 
-* FnMut
-receiver 是 &mut self, 会用到外部的 mutable referece, 也就是要求同一时间只能出现一个调用
+显然可以调用多次的 Fn 满足 FnMut 同一时间只出现一个调用的要求, 而满足 FnMut 的不一定能满足 Fn 的要求
 
-显然可以调用多次的 Fn 满足这个要求 (同一时间只出现一个调用), 而满足 FnMut 的不一定能满足 Fn 的要求
+#+begin_src rust
+fn call_fn(f: impl Fn()) { f() }
+fn call_mut(mut f: impl FnMut()) { f() }
+fn call_once(f: impl FnOnce()) { f() }
 
-* FnOnce
-receiver 是 self, 是 consume 的, 所以只能调用一次
+fn main() {
+    let s = "hello world!";
+    let f_fn = || println!("{}", s); // 如果加 move 的话, s 在外面就不能用了
+    call_fn(f_fn);
+
+    let mut lst = vec![1, 2, 3];
+    let f_mut = || lst.push(4);
+    call_mut(f_mut);
+    dbg!(&lst);
+
+    let iter = vec!["hello", "world"].into_iter();
+    let f_once = || iter.for_each(|word| println!("{}", word)); // consume
+    // 调用 drop(captured) 的也是这类
+    call_once(f_once);
+}
+#+end_src
+
+* mut closure or not
++ 仅实现到了 FnMut 的 closure 一般需要 mut 修饰, 表示调用之后捕获的变量会改变
++ 实现了 Fn 的捕获的变量不变, 所以不需要 mut
++ 仅实现了 FnOnce 的是一次性的, 反正只能用一次所以也不需要 mut
+
+* Unique immutable borrows in captures
+下面的代码, borrowing x mutably is not possible, because x is not mut
+#+begin_src rust
+fn main() {
+    let mut b = false;
+    let x = &mut b;
+    let mut c = || { *x = true; };
+    // dbg!(&x); // can not do this
+    c();
+    dbg!(&x); // it's ok
+}
+#+end_src
+
+* closure type implement trait
+** Sized
+all closure types implement **Sized**
+
+** Sync if
+all captured variables are **Sync**
+
+** Send if
++ all variables captured by non-unique immutable reference are **Sync**
++ and all values captured by unique immutable or mutable reference, copy, or move are **Send**
+
+** Clone/Copy if
++ it does **not** capture any values by unique immutable or mutable reference,
++ and all values it captures by copy or move are **Clone** or **Copy**
