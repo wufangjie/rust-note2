@@ -70,6 +70,17 @@ https://rust-lang.github.io/rfcs/2005-match-ergonomics.html
 #[derive(Debug)] // outer attributes
 #+END_SRC
 
+** visibility
+*** public and private
+1. If an item is public, then it can be accessed externally from some module m if you can access all the item's ancestor modules from m. You can also potentially be able to name the item through re-exports. See below.
+2. If an item is private, it may be accessed by the current module and its descendants (submodule).
+
+*** pub(...)
++ pub(in path) makes an item visible within the provided path. path must be an ancestor module of the item whose visibility is being declared.
++ pub(crate) makes an item visible within the current crate.
++ pub(super) makes an item visible to the parent module. This is equivalent to pub(in super).
++ pub(self) makes an item visible to the current module. This is equivalent to pub(in self) or not using pub at all.
+
 * 分散知识汇总
 ** Cow (Clone on Write)
 为了提高性能, 只有当需要写入的时候才 clone, 比如字符串的底层就是这个
