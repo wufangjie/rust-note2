@@ -1,0 +1,94 @@
+runtime reflection
+
+* TypeId struct
+只能获取 T: 'static 类型的 type_id, 但实际使用貌似是会把所有 lifetime 转成 'static
+#+begin_src rust
+pub struct TypeId {
+    t: u64
+}
+
+impl TypeId {
+    pub const fn of<T: ?Sized + 'static>() -> TypeId {
+	// ...
+    }
+}
+#+end_src
+
+以下所有的 type_id 均不相同
+#+begin_src rust
+fn main() {
+    dbg!(TypeId::of::<Box<dyn Any>>());
+    dbg!(TypeId::of::<&dyn Any>());
+    dbg!(TypeId::of::<dyn Any>());
+    dbg!(TypeId::of::<&i32>());
+    dbg!(TypeId::of::<i32>());
+}
+#+end_src
+
+* Any Trait
+#+begin_src rust
+pub trait Any {
+    fn type_id(&self) -> TypeId {
+    }
+}
+#+end_src
+
+* impl dyn Any
+只能在作为 trait object 时才能调用的方法,
+NOTE: dyn Any 其实也是类型 (trait object), 不过是 DST, 只能放在 & 或 Box 等之后才能使用, impl 它很合理
+
+** is
+#+begin_src rust
+impl dyn Any {
+    pub fn is<T: Any>(&self) -> bool {
+	let t = TypeId::of::<T>();
+	let concrete = self.type_id();
+	t == concrete
+    }
+
+}
+#+end_src
+
+** downcast_ref, downcast_mut
+downcast &dyn Any to Option<&T>, &mut dyn Any to Option<&mut T>
+downcast_ref_unchecked 和 downcast_mut_unchecked 可以直接转不过是 unsafe 的
+
+#+begin_src rust
+impl dyn Any {
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+	if self.is<T>() {
+	    unsafe { Some(self.downcast_ref_unchecked()) }
+	} else {
+	    None
+	}
+    }
+
+    pub unsafe fn downcast_ref_unchecked<T: Any>(&self) -> &T {
+	debug_assert!(self.is::<T>());
+	unsafe { &*(self as *const Any as *const T) }
+    }
+}
+#+end_src
+
+* impl Box<dyn Any>
+这些实现是在 Box 的实现里的, downcast Box<dyn Any> to Box<T> (the real type)
+
+没有对应版本的 is, 因为 is 关心的是 T 的类型, 可以用 &*Box<dyn Any> 转成上面的形式
+不同于上面的 ref 和 mut, Box 是 Owned 的, 所以对应的函数是 downcast, downcast_unchecked, 但是 downcast 返回的是 Result 而不是  Option
+
+* functions
+NOTE: 这两个函数都没有 T: 'static 的限制, 返回值都是 &'static str
+不同点: type_name 始终能用, type_name_of_val 需要开启 #![feature(type_name_of_val)]
+
+#+begin_src rust
+#![feature(type_name_of_val)]
+use std::any::{type_name, type_name_of_val};
+
+fn main() {
+    dbg!(type_name::<String>());
+    dbg!(type_name_of_val(type_name::<String>()));
+    dbg!(type_name_of_val(&"hello".to_string()));
+}
+#+end_src
+
+* 其他的内容还是 experimental
