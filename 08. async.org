@@ -1,4 +1,5 @@
 https://rust-lang.github.io/async-book/
+https://tokio.rs/tokio/tutorial
 
 以下给出描述性的解释 (可能有些不严谨), 有个大致的概念
 * future (impl Future<Output = YouExpect>)
@@ -25,4 +26,37 @@ yield 出的运行权由谁来接管, 一般是上一层, 但最顶层的通常�
 4. select: 等待直到 select 的异步中有一个完成 (通常会在外面套一个 loop 来实现更复杂的逻辑)
 
 * pin
+参考 async book 的第四章
+https://rust-lang.github.io/async-book/04_pinning/01_chapter.html
+
+** pin's contract
+promise: 一个 T 被 pin, 除非 T: Unpin, 否则它将不会被 move, 直到 T 被 drop (即使 Pin 被 drop 了也要保证)
+Pin 其实并不能从代码层面保证这个 promise, 只是能做出一些限制
+T: Unpin 说的是 move 不 move 都无所谓, 所以 Pin 就完全不会限制, 就算这个结构是自引用
+而其他情况都要通过 new_unchecked 这个 unsafe 的方法构造, 所以其实都是要人为保证, 但因为 Pin 保证了不能获得 &mut T, 所以只需要注意实现 DerefMut, Drop 这些能得到 &mut T 的方法时不 move 以及 Pin 被 drop 后的情况
+
+** why pin
 async block 或 async function 都是一个 impl Future type, 所以代码里的变量以及它们的引用就构成了一个自引用结构, 自引用结构如果 move 就会带来 UB, pin 就是用来解决这个问题的
+
+** new/new_unchecked
+new 是 unsafe 的, 并且只能生成 T: Unpin 的
+new_unchecked
+
+** as_[ref|mut]
+Pin 的 get_[ref|mut|unchecked_mut] 函数都是 consume 的, 并且要求 Pin 里面的是指针是引用形式, 所以一般要先调用 as_[ref|mut] 来防止 consume 和转换类型
+
+** get_[ref|mut|unchecked_mut]
+NOTE: as_mut() 之后是不能 get_ref() 必须再 as_ref() (因为定义)
+
+** Deref/DerefMut
+很有用, 但是为了不和 Pin 的方法混淆, 一般会用 Pin::some_method(&obj)
+参考自己实现的 pin.rs 的 test_pin_not_change_receiver()
+
+** shadowing
+一般是新建对象, 然后用 shadowing 生成 Pin<&mut T>, 因为 shadowing 所以对象不会被释放, 并且隐藏了入口, 不用担心违反 Pin 的 contract
+
+** map_unchecked_mut, pin_project
+有时间再深入吧
+
+** learn source code
+看了一下源码, 照着实现了个最简单的, 见 pin.rs
