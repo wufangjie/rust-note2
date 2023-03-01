@@ -326,5 +326,9 @@ fn main() {
 ** 死灵书对此的解释 (lifetime extend)
 https://doc.rust-lang.org/nomicon/lifetime-mismatch.html
 
+** stacked borrow
+这个模型对理解 reborrow 很有帮助
+https://www.ralfj.de/blog/2018/11/16/stacked-borrows-implementation.html
+
 * for<'a> and closure with lifetime
 高阶用法, 没看懂, 短时间内应该是用不到
