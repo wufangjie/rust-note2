@@ -170,3 +170,13 @@ executor
 | ZST      |                                          |
 
 第十章 Arc 和 Mutex (还没有开始写) 都已经看了源码, 就没去看
+
+** too many linked list
+看了前六章, 挺有意思的
+Box 型的链表需要手动循环删除，因为无法实现尾递归
+std::mem 的实战
+Option 的实战 (as_ref, as_mut, take, map, and_then, as_deref, as_deref_mut) (通过函数调用来约束 lifetime, 避免使用临时变量)
+Arc/Rc (get_mut 和 try_unwrap 的区别)
+RefCell 相关, 很难用好, 尤其涉及到 lifetime, 不用深究实际上也很少用
+Ref::map, Ref::map_split
+Iter/IterMut/IntoIter (&mut Option 和 Option<&mut> 区别)
