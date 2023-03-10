@@ -1,39 +1,100 @@
 * 分类
-| 悬垂指针 | dangling pointer |
-| UAF      | Use After Free   |
-|          | double free      |
-| 未初始化 |                  |
-| 空指针   |                  |
-| 越界访问 | Out Of Bounds    |
-| 内存溢出 | Out Of Memory    |
-| 内存泄漏 | memory leak      |
-|          | data race        |
-| 栈溢出   | stack overflow   |
+| 归类   |          | 英文 (首字母缩写)    | rust 是否可以解决         |
+|--------+----------+----------------------+---------------------------|
+| access | 悬垂指针 | dangling pointer     |                           |
+| access | UAF      | Use After Free       |                           |
+| access | 未初始化 | use of uninitialized |                           |
+| access | 空指针   | null pointer         |                           |
+|        |          | data race            |                           |
+| free   |          | double free          |                           |
+| free   | 内存泄漏 | memory leak          | 基本可以                  |
+|        | 越界访问 | Out Of Bounds        | limited, 只能提供少量检查 |
+|        | 内存溢出 | Out Of Memory        | 基本不能                  |
+|        | 栈溢出   | stack overflow       | 基本不能                  |
+|        |          | buffer overflow      |                           |
 
-* 说明
-rust 能解决的也不是所有的内存安全问题, 而是近年来频率最高的一些
+NOTE: rust 能解决的也不是所有的内存安全问题, 而是近年来频率最高的一些
+NOTE: UAF is a special type of dangling pointer
 
 * data race and race condition
-https://blog.regehr.org/archives/490
-
 ** data race
 两种形式, 以两个线程为例:
-1. 同时读写 (且至少一个写) (比如: 写了一半被读, 或分别写入了数据的不同部分, 造成不合法数据, UB)
+1. 同时读写 (且至少一个写) (比如: 写了一半被读, 或分别写入了数据的不同部分, 造成不合法数据, 属于 UB)
 2. 都要读写但不是同时 (且写的内容和读到的数据有关, 比如为原始数据+x) (但写之前没有进行数据同步, 用的是很久之前读到的数据)
 
 解决方法: 互斥锁或读写锁
 
+** harmless data race
+就是满足以上两种形式之一, 但是无论怎么改变顺序, 结果都一样
+NOTE: harmless data race 只是针对目前的实现而言的, 当程序改变时它可能会导致问题, 带来很大的心智负担, 所以一般实际使用时还是会尽可能避免 data race
+
 ** race conditon
-和执行顺序有关的非 data race 造成的错误
+two or more threads or processes access a shared resource in an unexcepted order, leading to unexcepted behavior
 
 解决方法: 改用单线程, 或重新设计流程, 或用状态机
 
 ** 两者的关系
 |              | Race Condition | no Race Condition |
-| Data Race    |                |                   |
-| no Data Race |                |                   |
+| Data Race    | case1          | case4             |
+| no Data Race | case2          | case3             |
 
 1. 两者相互独立, 以上四种情况都可能存在, 但很多时候它们都是同时出现的
-2. rust 能解决的是 data race
-3. data race 属于 UB
-4. 可以看看这一节最开始的 url 给出的四种情况的例子
+2. rust 能解决的是 data race, 而 race condtion 基本不可能从程序层面避免
+3. Data race is a type of race condition (from wikipedia, 可能是指 harmful data race)
+4. Not all regard data races as a subset of race conditions (alse from wikipedia, 指的是 harmless data race)
+
+** examples
+https://blog.regehr.org/archives/490
+
+*** case1
+#+begin_src c
+transfer1 (amount, account_from, account_to) {
+	if (account_from.balance < amount) return NOPE;
+	account_to.balance += amount; // unsafe
+	account_from.balance -= amount;
+	return YEP;
+}
+#+end_src
+
+*** case2 (each operation are atomic)
+#+begin_src c
+transfer2 (amount, account_from, account_to) {
+	atomic {
+		bal = account_from.balance;
+	}
+	if (bal < amount) return NOPE;
+	atomic {
+		account_to.balance += amount;
+	}
+	atomic {
+		account_from.balance -= amount; // negative overflow
+	}
+	return YEP;
+}
+#+end_src
+
+*** case3
+#+begin_src c
+transfer3 (amount, account_from, account_to) {
+	atomic {
+		if (account_from.balance < amount) return NOPE;
+		account_to.balance += amount;
+		account_from.balance -= amount;
+		return YEP;
+	}
+}
+#+end_src
+
+*** case4 (harmless data race)
+#+begin_src c
+transfer4 (amount, account_from, account_to) {
+	account_from.activity = true; // data race happens in this and next row
+	account_to.activity = true;
+	atomic {
+		if (account_from.balance < amount) return NOPE;
+		account_to.balance += amount;
+		account_from.balance -= amount;
+		return YEP;
+	}
+}
+#+end_src
