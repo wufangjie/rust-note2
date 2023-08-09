@@ -1,29 +1,7 @@
 runtime reflection
 
-* dyn Trait
-dyn Trait 也是类型 (trait object), 不过是 DST, 调用类方法是需要 <> 包裹 (因为有空格), 比如
-
-#+begin_src rust
-impl dyn Any + Send {
-    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
-        <dyn Any>::downcast_ref::<T>(self)
-    }
-}
-#+end_src
-
-对于 trait object 来说加上 Send 或 Sync 就是不同的类型, 所以 std 文档里基本上每个函数都有三种实现
-#+begin_src rust
-dyn Any + 'static;
-dyn Any + Send + 'static;
-dyn Any + Send + Sync + 'static;
-#+end_src
-
-实际使用的话都是可以向下兼容的 (协变)
-
-至于为什么没有 dyn Any + Sync + 'static, 我知道的 Sync 但不 Send 的貌似只有各种 lockguard
-
 * TypeId struct
-只能获取 T: 'static 类型的 type_id, 但实际使用貌似是会把所有 lifetime 转成 'static, 即保证 &'a T 和 &’b T 是同一种类型
+只能获取 T: 'static 类型的 type_id, 但实际使用貌似是会把所有 lifetime 转成 'static, 即可以保证 &'a T 和 &’b T 是同一种类型
 
 #+begin_src rust
 pub struct TypeId {
@@ -57,7 +35,7 @@ pub trait Any {
 #+end_src
 
 * impl dyn Any
-只能在作为 trait object 时才能调用的方法,
+在此大括号内的方法表示只能在作为 trait object 时才能调用
 NOTE: dyn Any 其实也是类型 (trait object), 不过是 DST, 只能放在 & 或 Box 等之后才能使用, impl 它很合理
 
 ** is
@@ -68,7 +46,6 @@ impl dyn Any {
 	let concrete = self.type_id();
 	t == concrete
     }
-
 }
 #+end_src
 
@@ -93,10 +70,50 @@ impl dyn Any {
 }
 #+end_src
 
+* impl dyn Any + Send
+dyn Any 其实是包括 Send 和 !Send 的情况的, 但是由于 dyn Any + Send 是新的类型, 无法 coerce 到 dyn Any, 所以当我们定义的函数类型是前者时, 无法调用后者的方法
+
+注意与 dyn SomeTrait 可以调用 SomeTrait 的 trait method 不一样, 此时的 dyn Any 和 dyn Any + Send 就是两个普通的类和 dispatch 完全没有关系
+
+而这些类型对于多线程之类的又十分有用, 所以 impl 看起来有点冗余
+
+** 例子
+#+begin_src rust
+trait MyTrait {}
+
+impl dyn MyTrait + '_ {
+    fn dyn_raw(&self) {
+    	println!("calling dyn_raw");
+    }
+}
+
+fn test(t: &(dyn MyTrait + Send)) {
+    t.dyn_raw() // can not compile, no method `dyn_raw` on type `&(dyn MyTrait + Send)`
+}
+#+end_src
+
+NOTE:  '_ 等价于 impl<'a> dyn MyTrait + 'a; 不指定好像默认是 'static, 这样的话下面的 test 函数也需要是 &’static
+
+** 实现 (调用 dyn Any 的方法)
+<dyn Any> 要加 <> 是因为中间有空格
+#+begin_src rust
+impl dyn Any + Send {
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        <dyn Any>::downcast_ref::<T>(self)
+    }
+}
+#+end_src
+
+** dyn Any + Send + Sync
+因为 lifetime 可以协变所以不用单独实现, 至于为什么没有 dyn Any + Sync 我也不清楚 (貌似是只有各种 guard, 所以用不上)
+
 * impl Box<dyn Any>
 这些实现是在 Box 的实现里的, downcast Box<dyn Any> to Box<T> (the real type)
 
 没有对应版本的 is, 因为 is 关心的是 T 的类型, 可以用 &*Box<dyn Any> 转成上面的形式, 事实上因为实现了 deref 所以是可以直接用的 downcast 源码里就用到了 self.is::<T>()
+
+type_id 是 Any 的 trait method, 而 Box 也 impl 了 Any, 所以 Box<dyn Any> 的 type_id 是 Box 的, 而不是内部那个的
+
 
 不同于上面的 ref 和 mut, Box 是 Owned 的, 所以对应的函数是 downcast, downcast_unchecked 不像前者只需要返回引用, downcast 是可能失败的? 所以返回的是 Result 而不是 Option
 
@@ -109,9 +126,12 @@ NOTE: 这两个函数都没有 T: 'static 的限制, 返回值都是 &'static st
 use std::any::{type_name, type_name_of_val};
 
 fn main() {
-    dbg!(type_name::<String>());
-    dbg!(type_name_of_val(type_name::<String>()));
-    dbg!(type_name_of_val(&"hello".to_string()));
+    assert_eq!("alloc::string::String", type_name::<String>());
+    assert_eq!("str", type_name_of_val(type_name::<String>()));
+    assert_eq!(
+        "alloc::string::String",
+        type_name_of_val(&"hello".to_string())
+    );
 }
 #+end_src
 
