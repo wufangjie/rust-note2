@@ -18,7 +18,7 @@ impl<T> Trait for &mut T {} // 只去掉这句也不行
 #+end_src
 
 * 可能不对的理解
-我们不能为 &T impl Drop, 也就是清理它们时不需要额外操作 (区别于 owned), 也就是可以认为它们到最后一次使用后就 "析构" 了 (事实上 borrow check 的 lifetime 就是这么取的)
+我们不能为 &T impl Drop (因为它是 Copy 的), 也就是清理它们时不需要额外操作 (区别于 owned), 也就是可以认为它们到最后一次使用后就 "析构" 了 (事实上 borrow check 的 lifetime 就是这么取的)
 
 最后一次使用的具体位置可能会比较复杂:
 1. 用赋值转移了所有权
@@ -62,7 +62,7 @@ fn main() {
 * reborrow vs borrow a reference
 #+begin_src rust
 fn main() {
-    let mut owned = 5;
+    let mut owned = 42.to_string();
     let borrow = &mut owned;
     let reborrow = &*borrow;
     let borrow_a_ref = &borrow;
@@ -70,14 +70,52 @@ fn main() {
 }
 #+end_src
 
-可以认为上面的 reborrow  是 borrow 了 borrow, 同时又 mutably borrow 了 owned?
+从表面结构上看 reborrow 应该是 owned 的 immutable reference, 但根据 borrow 的规则 owned 已经有一个 mutably borrow 了, 是不能再有 immutable borrow 的, 所以 reborrow 需要通过 borrow 变量 (stacked borrow), 这样也能防止 reborrow 的值被 borrow 变量修改 (这是我们不希望看到的)
 
-borrow_a_ref 只需要考虑前者? 如果改成 &mut 那么和下面的 &borrow 就冲突了
+以下例子不能通过编译, 可以看出 reborrow 确实依赖 borrow
+#+begin_src rust
+fn main() {
+    let mut owned = 42.to_string();
+    let mut borrow = &mut owned;
+    let reborrow = &*borrow;
+    let borrow_a_ref = &mut borrow;
+    dbg!(reborrow, borrow_a_ref);
+}
+#+end_src
+
+另外 reborrow 不能改变 owned 的值, 且 reborrow 存在的范围内, owned 一直不能被改变
+
+如果 borrow 只是 owned 的一个 immutable reference, 那么 reborrow 不依赖 borrow, 和直接 borrow owned 完全一样 (因为 Copy)
+#+begin_src rust
+fn main() {
+    let mut owned = 42.to_string();
+    let mut borrow = &owned;
+    let reborrow = &*borrow;
+    let borrow_a_ref = &mut borrow;
+    dbg!(reborrow, borrow_a_ref);
+}
+#+end_src
 
 上面的例子是从这个链接来的 https://doc.rust-lang.org/nomicon/lifetime-mismatch.html, 不过把函数调用改了
 
-结论: 目前所知的所有情况都不要使用 reborrow
+** 结论:
+1. 目前所知的所有情况, 都不要使用 &*&mut T 这种类型的 reborrow
+2. 不必使用 &*&T, 直接用 &T 就行, 因为是 Copy 的, 除非 T impl 了 Deref
+3. 这种类型 &mut *&mut T 偶尔有用, 不过大部分情况都会隐式 reborrow (详见第一章)
 
 * ref keyword
 ref 用于 destructure 来构造 reference, 注意比较 &
 https://doc.rust-lang.org/rust-by-example/scope/borrow/ref.html
+
+在没有 match ergonomic 之前, 这个也用来实现 Option/Result 的 & 内移 (目前的源码还是这样, 如下)
+
+#+begin_src rust
+impl<T> Option<T> {
+    pub const fn as_ref(&self) -> Option<&T> {
+        match *self {
+            Some(ref x) => Some(x),
+            None => None,
+        }
+    }
+}
+#+end_src
