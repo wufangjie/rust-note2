@@ -13,6 +13,16 @@ https://doc.rust-lang.org/rust-by-example/fn/closures.html
 5. fn pointer implement all three of closure traits (Fn, FnMut, FnOnce)
 6. closure types all implement FnOnce
 
+* special syntax
+Fn 是一个 generic trait, 其中参数的类型是泛型 (Args, 是一个 tuple), 而返回值是 associated type: Output
+
+所以按照最原始写法这个 trait 应该是以下形式: Fn<(), Output=()>
+但事实上上述写法并不能通过编译, 而要写成: Fn() -> (), 如果 output 为 (), 还可以缩写乘 Fn()
+
+具体的理由我没看懂, 有兴趣的可以看报错提示和以下资料
+https://github.com/rust-lang/rust/issues/29625
+死灵书 Higher-Rank Trait Bounds (HRTBs)
+
 * move
 NOTE: move 关键字只改变变量的捕获方式, 不改变 closure 实现 Fn/FnMut/FnOnce 的推导
 用了 move 外面的就不能再用了, 不用的话, &T, &mut T 型捕获在最后一次 closure 调用后可用
@@ -30,8 +40,8 @@ fn main() {
 }
 #+end_src
 
-* 转换
-不同于变量的 owner variable -> mutable reference -> immutable reference
+* 转换 (coerce)
+不同于变量的 owned variable -> mutable reference -> immutable reference
 即通过 owner 变量我们可以得到 &mut, 进一步可以转化为 &
 
 closure 从实现的角度看反过来的 Fn() -> FnMut() -> FnOnce()
@@ -72,20 +82,20 @@ fn main() {
 }
 #+end_src
 
-* mut closure or not
+* add mut before closure or not
 + 仅实现到了 FnMut 的 closure 一般需要 mut 修饰, 表示调用之后捕获的变量会改变
 + 实现了 Fn 的捕获的变量不变, 所以不需要 mut
 + 仅实现了 FnOnce 的是一次性的, 反正只能用一次所以也不需要 mut
 
-* Unique immutable borrows in captures
-下面的代码, borrowing x mutably is not possible, because x is not mut
+* unique immutable borrows in captures
+下面的代码, 来自 rust reference, 其实可以用隐式 reborrow 来解释, 详见第一章
 #+begin_src rust
 fn main() {
     let mut b = false;
     let x = &mut b;
     let mut c = || { *x = true; };
     // dbg!(&x); // can not do this
-    c();
+    c(); // &c as &dyn Fn(); // only implement FnMut()
     dbg!(&x); // it's ok
 }
 #+end_src
