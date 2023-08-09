@@ -11,6 +11,7 @@ trait Cat: Animal {
 #+end_src
 
 * meowing dog problem
+以下代码在 rust 其实是不能通过编译的, rust 没有这种类型转换, 但是 rust 的 lifetime 会发生这种转换, 所以只是用更形象的类型 (面向对象) 来说明问题
 #+begin_src rust
 fn evil_feeder(pet: &mut Animal) {
     let spike: Dog = ...;
@@ -27,7 +28,7 @@ fn main() {
 }
 #+end_src
 
-* coersion 最原始的想法
+* coercion 最原始的想法
 anywhere a value of type T is expected, we will also accept values that are subtypes of T
 
 * 协变, 逆变, 不变
@@ -46,6 +47,8 @@ Given two types Sub and Super, where Sub is a subtype of Super:
 | UnsafeCell<T> |           | invariant     |           |
 | fn(T) -> U    |           | contravariant | covariant |
 
+相对于 (over) 'a 的协变是平凡的, 后续不特别说明都是针对 T 的协变
+
 * 扩展类型
 |          | 可类比        |
 |----------+---------------|
@@ -54,8 +57,14 @@ Given two types Sub and Super, where Sub is a subtype of Super:
 | *const T | &'a T         |
 | *mut T   | &'a mut T     |
 
-* Box<T>, UnsafeCell<T>
-其实 owned 的 Cell 和 Box 并没有区别, 之所以设计成 invariant, 是为了保持 &T covariant 的简单
+* 最基本的判断方法
+协变通常发生在函数调用时, 且函数的参数声明保证在此次函数调用内肯定是没有问题的, 即使通过返回值也只能返回当前的 lifetime (而非协变前的)
+所以唯一可能出问题的就是 &mut T 或内部可变的 UnsafeCell, Cell 等
+
+问题也很单一，就是把 T 的 lifetime 的缩短，然后外部再使用的时候可能会 invalid reference
+
+解决这个问题的方法更简单, 告诉编译器该类型不是协变的, 编译器就能帮我们把问题找出来
+
 #+begin_src rust
 fn down_box<'r>(x: Box<&'static str>) -> Box<&'r str> {
     x
