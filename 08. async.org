@@ -49,7 +49,7 @@ Pin 的 get_[ref|mut|unchecked_mut] 函数都是 consume 的, 并且要求 Pin �
 NOTE: as_mut() 之后是不能 get_ref() 必须再 as_ref() (因为定义)
 
 ** Deref/DerefMut
-很有用, 但是为了不和 Pin 的方法混淆, 一般会用 Pin::some_method(&obj)
+很有用, 但是为了不和被 Pin 的 T 的方法混淆, 一般会用 Pin::some_method(&obj)
 参考自己实现的 pin.rs 的 test_pin_not_change_receiver()
 
 ** shadowing

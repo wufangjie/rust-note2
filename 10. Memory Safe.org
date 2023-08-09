@@ -41,7 +41,7 @@ two or more threads or processes access a shared resource in an unexcepted order
 1. 两者相互独立, 以上四种情况都可能存在, 但很多时候它们都是同时出现的
 2. rust 能解决的是 data race, 而 race condtion 基本不可能从程序层面避免
 3. Data race is a type of race condition (from wikipedia, 可能是指 harmful data race)
-4. Not all regard data races as a subset of race conditions (alse from wikipedia, 指的是 harmless data race)
+4. Not all regard data races as a subset of race conditions (also from wikipedia, 指的是 harmless data race)
 
 ** examples
 https://blog.regehr.org/archives/490

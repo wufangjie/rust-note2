@@ -1,8 +1,8 @@
 死灵书的关于 lifetime 的那些章节帮助从理论上理解 lifetime
-以下这篇文章讲了很多 lifetime 的使用细节
+而以下这篇文章讲了很多 lifetime 的使用细节
 https://github.com/pretzelhammer/rust-blog/blob/master/posts/common-rust-lifetime-misconceptions.md
 
-* 特殊的泛型
+* lifetime 是一种特殊的泛型
 Lifetimes are another kind of generic that we've already been using.
 Rather than ensuring that a type has the behavior we want, lifetimes ensure that references are valid as long as we need them to be.
 
@@ -11,7 +11,7 @@ Lifetimes are named regions of code that a reference must be valid for T
 
 解读:
 1. lifetime 是关于 T 的 lifetime, 用来标记 &T, &mut T (也可以是包含它们的 struct 等) 的有效范围
-2. lifetime 可以有多个, 可以重叠, 通过 borrow checker 来判断所有这些 lifetimes 合在一起是否合法
+2. lifetime 可以有多个, 可以有重叠, 通过 borrow checker 来判断所有这些 lifetimes 合在一起是否合法
 
 NOTE: 上面的 T 不一定是 owned type, 也可以是 reference
 #+begin_src rust
@@ -21,14 +21,15 @@ fn main() {
     let c = &mut b;
     *c = &42;
     dbg!(a, c);
+    dbg!(b);
 }
 #+end_src
 
 * 相同的入参 lifetime, 比如 'a 的含义 (以 longest 函数为例)
 + 'a 并不表示 x, y 的 lifetime 一样
-+ 'a 其实是被标记为 'a 的入参的 lifetime 的最小值
++ 'a 其实是被标记为 'a 的所有入参的 lifetime 的最小值
 
-作为 x 的 lifetime, &'a 是一个泛型有一个最长的范围, 作为 y 的 lifetime 也有, 两个都满组的当然是它们中的最小值
+作为 x 的 lifetime, &'a 是一个泛型有一个最长的范围, 作为 y 的 lifetime 也有, 两个都满足的最大可能值当然是它们中的最小值
 
 #+begin_src rust
 fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
@@ -46,8 +47,8 @@ fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
 3. lifetime bound: T: 'a, T: Trait + 'a, 'a: 'b
 4. trait object: Box<dyn Trait + 'a>
 
-+ 加 'a 是通过加 lifetime 让 borrow checker 帮忙确保正确的使用范围
-+ 注意 T<'a> 和 T: 'a 的区别, 前者包含有 'a 限制的字段使得 T 的使用范围不能超过 'a, 而后者的意思是 T 至少 (甚至可以是无限长 owned) 在 'a 都是可以正常使用的
++ 加 lifetime 的作用是让 borrow checker 在 compile 时帮忙确保 reference 的正确使用范围
++ 注意 T<'a> 和 T: 'a 的区别, 前者包含有 'a 限制的字段使得 T 的使用范围不能超过 'a(否则会有字段 invalid), 而后者的意思是 T 至少 (甚至可以是无限长 owned) 在 'a 都是可以正常使用的
 
 * 一些规则
 1. each let (and function call) will implicitly introduces a scope
@@ -69,8 +70,8 @@ fn main() {
 	'b: {
             let z: &'b i32;
             'c: {
-		let y: &'b i32 = &'b x; // pass ref to outer, extend 'c to 'b
-		z = y;
+		let y: &'b i32 = &'b x; // here is 'c, then extend 'c to 'b because of the following line
+		z = y; // pass ref y to outer z
             }
 	}
     }
@@ -136,7 +137,7 @@ fn main() {
 3. If there are multiple input lifetime positions, but one of them is &self or &mut self, the lifetime of self is assigned to all elided output lifetimes
 
 一般函数返回值的 lifetime 除了 'static 都是 derive from inputs 的 (否则称为 unbounded, 没遇到过)
-derive 可以是入参本身的 lifetime 也可以是其字段的 lifetime 等
+derive 的可以是入参本身的 lifetime 也可以是其字段的 lifetime 等
 
 * lifetime bound 'a: 'b
 读作 'a outlive 'b, 意思是 'a 的作用域至少和 'b 一样长
@@ -173,6 +174,8 @@ fn main() {
 + T: 'a 的所有字段都是 lifetime >= 'a 或 owned
 
 * 不要过于乱省略或乱标, 不要过于依赖编译器
+一个原则就是明确真正要 reference 的是什么
+
 ** 乱标的例子
 按照我们之前理解, 函数里的 &'a mut self 说的是: 在 'a 内这个 &mut obj 都有效
 再看看 'a 是什么, 'a 是 i32 的 lifetime, NumRef<'a> 说的是 NumRef 的 lifetime 不超过 'a, 满足这样条件的 'a 只有一个
@@ -229,19 +232,18 @@ fn main() {
 * Lifetime elision in trait object
 trait object 都是有 lifetime 的, 如果没有 lifetime 就可以省略 + 'static, 如果有唯一的 lifetime 'a 就可以省略 + 'a
 
-第一个函数其实是省略了 + 'static, (多线程无法确定完成的顺序, 所以为了避免 UAF 需要 'static lifetime)
-#+begin_src rust
-use std::fmt::Display;
+第一个函数其实是省略了 + 'static, (多线程无法确定完成的顺序, 所以为了避免 UAF 需要 'static lifetime), 而第二个不能省略
 
-fn dynamic_thread_print(t: Box<dyn Display + Send>) {
+#+begin_src rust
+fn dynamic_thread_print(t: Box<dyn ToString + Send>) {
     std::thread::spawn(move || {
-        println!("{}", t);
+        println!("{}", t.to_string());
     }).join();
 }
 
-fn static_thread_print<T: Display + Send + 'static>(t: T) {
+fn static_thread_print<T: ToString + Send + 'static>(t: T) {
     std::thread::spawn(move || {
-        println!("{}", t);
+        println!("{}", t.to_string());
     }).join();
 }
 #+end_src

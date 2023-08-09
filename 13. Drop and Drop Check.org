@@ -141,6 +141,7 @@ unsafe impl<#[may_dangle] T> Drop for MyBox<T> {
         if std::mem::size_of::<T>() > 0 {
             unsafe {
                 drop_in_place(self.0.as_ptr());
+		println!("MyBox drop_in_place finished!");
                 let layout = Layout::new::<T>();
                 dealloc(self.0.as_ptr() as *mut u8, layout);
             }
@@ -190,12 +191,13 @@ fn main() {
 }
 #+end_src
 
-** 解决办法 phantomData
+** 解决办法 PhantomData
 所以对 T 做 drop check 还是必要的, 看 std 的实现是用了 Unique<T>, 将 NonNull 改成 core::ptr::Unique 之后就可以了
 
-事实上 drop check 不仅对自身的各个参数做, 还会递归的对自身包含的字段做, 如果能让 drop check 认为该类型包含了一个 T 就可以, 但对于实际使用我们希望这个实现用的是一个 ZST, 这就是 PhantomData
+事实上 drop check 不仅对自身的各个参数做, 还会递归的对自身包含的字段做, 如果能让 drop check 认为该类型 own 一个 T 就可以, 但对于实际使用我们希望这个实现用的是一个 ZST, 这就是 PhantomData
 
 *** using Unique
+底层还是用的 PhantomData
 #+begin_src rust
 pub struct Unique<T: ?Sized> {
     pointer: NonNull<T>,

@@ -1,5 +1,5 @@
 * auto trait
-意思就是: 如果子类型实现了该 trait, 那么自动为其实现该 trait, 除非手动不指定实现
+意思就是: 如果子类型实现了该 trait, 那么自动为其实现该 trait, 除非手动指定不实现 (negative implementation)
 具体定义可以看: https://doc.rust-lang.org/reference/special-types-and-traits.html#auto-traits
 
 #+begin_src rust
@@ -22,9 +22,9 @@ std::marker Send, Sync, Sized, Unpin, Copy
 Send: 可以安全地在线程间转移所有权
 Sync: T is Sync if and only if &T is Send (T 是 Sync 的定义就是可以安全地在线程间传递 (Send) &T)
 
-NOTE: Send 是有前提的, 比如 borrow checker, 有 borrowed 就不能 send, 所以判断 send 是否安全的时候不能考虑线程还有 borrow 的情况
+NOTE: Send 是有前提的, 比如 borrow checker, 借出去了还没还就不能 send, 所以判断 send 是否安全的时候不能考虑线程还有 borrow 的情况
 
-而 Rc 确实都是 owned, 即使没有 &Rc 这种, 它们 Send 之后, 会有 data race
+而 Rc 确实都是 owned, 即使没有 &Rc 这种, 也可能会有共享同一资源的 Rc 存在, 所以 Send 之后, 不能避免 data race
 
 * !Send and !Sync types
 + Rc
@@ -41,7 +41,7 @@ because lock and release in differnt threads are supposed to be UB
 * !Sync but (auto) Send types
 + Cell
 + RefCell
-+ UnsafeCell
++ UnsafeCell (the core primitive for interior mutability)
 
 NOTE: SyncUnsafeCell 是 Sync, 其代码和 UnsafeCell 完全一样, 需要用户手动保证同步
 
@@ -71,7 +71,7 @@ where
 
 impl<T> Send for Arc<T>
 where
-    T: Sync + Send + ?Sized, // need Sync because of Arc<Cell<T>>
+    T: Sync + Send + ?Sized, // need Sync because of Arc<Cell<T>> + Deref
 #+end_src
 
 ** struct, if its all fields are references
@@ -87,7 +87,7 @@ impl<T: ?Sized + Send> Sync for Mutex<T>
 impl<T: ?Sized + Send + Sync> Sync for RwLock<T>
 #+end_src
 
-+ 为什么需要 T: Send, 因为 lock()/write() 能得到 &mut T (deref a guard) 然后 T (* or using std::mem)
-+ 为什么不需要 T: Sync, 因为锁的存在保证只有一个线程能得到 &T, 从而不会有 data race
-+ 同上 RwLock 需要 T: Sync (因为 T 可能是 Cell, 可以通过不可变引用的 read 改变内部)
-+ 需要特别说明的是, MutexGuard 虽然实现了 DerefMut 可以得到 &mut T, 从而得到 T, 但是别忘了 DerefMut 的参数是 &mut self, 也就是不可能在 Sync 共享时取到 (这个和 Mutex 有很大区别)
++ 为什么需要 T: Send, 因为 lock()/write() 能得到 &mut T (deref_mut from a guard) 然后 T (* or using std::mem)
++ 为什么不需要 T: Sync, 因为锁的存在保证只有一个线程能得到 &mut T, 从而不会有 data race
++ 同上 RwLock 需要 T: Sync (因为 T 可能是 Cell, 可以通过不可变引用的 read 改变内部, 而 Mutex 同一时间只会有一个引用)
++ 需要特别说明的是, MutexGuard 虽然实现了 DerefMut 可以得到 &mut T, 从而得到 T, 但是别忘了 DerefMut 的参数是 &mut self, 也就是不可能在 Sync 共享时取到

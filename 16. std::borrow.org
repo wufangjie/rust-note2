@@ -74,7 +74,7 @@ impl<T: ?Sized> const Borrow<T> for T { // NOTE: unstable const
 ** 定义
 #+begin_src rust
 trait ToOwned {
-    type Owned: Borrowed<Self>; // generic type's trait bound
+    type Owned: Borrow<Self>; // generic type's trait bound
 
     fn to_owned(&self) -> Self::Owned;
 
@@ -86,7 +86,7 @@ trait ToOwned {
 
 ** VS Clone
 Clone 只能解决 &T -> T 的拷贝, 外加一些特殊的 &str -> &str, &[T] -> &[T]
-ToOwned 可以是任意指定值, 可以实现 &str -> String, &[T] -> Vec<T>
+ToOwned 可以是任意 (唯一) 指定值, 可以实现 &str -> String, &[T] -> Vec<T>
 
 ** for str
 #+begin_src rust
@@ -103,7 +103,7 @@ impl ToOwned for str {
 
 ** for T: Clone
 NOTE: &str: Clone 所以 (&&str).to_owned() 返回的是 &str, 而不是 String (和 to_string 的区别)
-NOTE: 这个 impl 和上面的 str 的 impl 并不冲突, 因为 str 是 DST, 这里不是 T: ?Sized 所以不包括 str
+NOTE: 这个 impl 和上面的 str 的 impl 并不冲突 (&str -> String 时 T 是 str, 而不是 &str), 因为 str 是 DST, 这里不是 T: ?Sized 所以不包括 str
 #+begin_src rust
 impl<T: Clone> ToOwned for T {
     type Owned = T;
@@ -118,10 +118,11 @@ impl<T: Clone> ToOwned for T {
 ** 定义
 #+begin_src rust
 pub enum Cow<'a, B: ?Sized + ToOwned> {
-    Borrowed(&'a B),
+    Borrowed(&'a B), // B 可以为 str, 所以 bound 要加 ?Sized
     Owned(<B as ToOwned>::Owned) // 联系 &str 能更好地理解
 }
 #+end_src
+NOTE: Owned 包含了反向的 Borrow, 所以可以省掉, 反之则不行
 
 ** immutable access
 无论何时, 都可以从 Cow 中得到 immutable reference, 并且因为 Cow impl 了 Deref 所以很方便
@@ -150,7 +151,7 @@ impl<B: ?Sized + ToOwned> Cow<'_, B> {
             Cow::Borrowed(borrowed) => {
                 *self = Cow::Owned(borrowed.to_owned());
                 match *self {
-                    // 不用递归, 以防万一陷入无限循环
+                    // 不用递归, 以防万一陷入无限循环?
                     Cow::Borrowed(_) => unreachable!(),
                     Cow::Owned(ref mut owned) => owned,
                 }

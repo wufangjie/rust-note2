@@ -105,8 +105,8 @@ oneshot: 通常是通过存在的 mpsc 把 oneshot 的 sender 传过去
 broadcast
 
 * rwlock
-+ 一种是 read first (or read-preferring), 即只有有读, 写的 acquire 就会被搁置
-+ 另一种是 write first, 一旦有 write acquire, 之后的度都会被搁置
++ 一种是 read first (or read-preferring), 即只要有读, 写的 acquire 就会被搁置
++ 另一种是 write first, 一旦有 write acquire, 之后的读都会被搁置
 
 第一种实现简单, 但可能会导致一直不能更新数据, write starvation
 第二种比较复杂, 可以有不同的实现

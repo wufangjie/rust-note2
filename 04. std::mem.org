@@ -4,7 +4,7 @@
 2. Pin 的引入也是因为 swap 包含自引用的 struct 时, 引用不会跟着 swap, 会导致 UB
 
 * size_of, size_of_val
-学习或 debug 时经常会用到的功能, 获取类型/变量的大小
+学习或 debug 时经常会用到的功能, 获取类型/变量的大小, size_of_val 的参数是 &self (对非 Copy 的类型也不影响后续使用)
 
 * drop, forget, ManuallyDrop
 ** drop and forget
