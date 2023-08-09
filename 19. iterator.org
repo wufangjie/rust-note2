@@ -1,0 +1,73 @@
+* Iterator trait
+所有本节的基础,
++ 有一个 Item associated type, 指定迭代器元素的类型
++ 只需要手动实现 next 方法, 就能 impl Iterator trait, 可以使用很多它基于 next 自动实现的方法
+
+* different receiver
+** self
+iterator 的大部分函数都是 consume 的, 常用方法按返回类型分类如下
+
+*** 还是迭代器 (定义在 std::iter 中的类型)
++ step_by
++ take, take_while, skip, skip_while
++ map
++ filter, filter_map
++ flatten, flat_map
++ zip, chain
+
+*** 组合计算结果
++ reduce, fold
++ count, sum, product, max, min, collect
++ eq 等比较方法
+
+*** ()
+for_each 就是为了它的副作用, 详见官方文档
+
+** &self
+常用的可能就是 size_hint
+
+** &mut self
+只消耗部分的 iterator, 后续可能还有用, 当然如果设计成 self, 也可以用 by_ref 来保留后续的使用权
+
+*** all, any (lazy)
+#+begin_src rust
+fn main() {
+    let mut iter = [1, 1, 2, 3].into_iter();
+    assert!(!iter.all(|x| x > 1));
+    assert!(iter.eq(vec![1, 2, 3]));
+
+    let mut iter = [1, 1, 2, 3].into_iter();
+    assert!(iter.any(|x| x == 2));
+    assert!(iter.eq(vec![3]));
+}
+#+end_src
+
+*** by_ref
+对于非 &mut self 方法可以防止调用者的 ownership move, 比如 by_ref + take 组合可以实现分次取数的效果
+
+*** find, find_map, nth, position, rposition
+设计成不耗尽, 可以定制过多功能, 比如第 n 个满足条件的位置等
+
+*** try_ prefixed methods
+collect, find, fold, for_each, reduce
+
+*** next, next_chunk
+最基本的操作
+
+* reciver in predicate
++ 如果原有的数据不再需要, 就用 item, 比如各种带 map 进行转换的, eq_by (只需要最终结果), position (只需要索引)
++ 如果原有数据还要用于结果, 则会用 &item, 比如 find, max_by
+
+* IntoIterator
+#+begin_src rust
+pub trait IntoIterator {
+    type Item;
+    type IntoIter: Iterator<Item = Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIterator;
+}
+#+end_src
+
+std 里一般会为 T, &T, &mut T 分别实现 IntoIterator, 其中 Item 分别是 owned, immutable reference, mutable reference
+
+其中后两个一般会有对应的方法 iter(&self), iter_mut(&mut self), 用来解决迭代器的多次使用问题, 也就是 (&T).into_iter() 和 T.iter() 等价
