@@ -11,6 +11,7 @@ bound 说的是要实现 Foo 的类型必须是实现了 Bar 的
 
 * orphan rule
 为一个类型实现一个 trait, 那么类型或 trait 至少要有一个是自定义的
+NOTE: From<CustomStruct> 是自定义的, 虽然 From 是 std 定义的一个 generic trait
 
 * impl VS dyn
 + impl trait 等价于定义一个实现了该 trait 的范型 (compile-time static dispatch)
@@ -20,6 +21,8 @@ bound 说的是要实现 Foo 的类型必须是实现了 Bar 的
 trait object 是 dst, 所以 dyn 只能放在 &, &mut, Box, Rc, Arc 这些的后面, 它的大小是普通指针的两倍 (一个指向具体数据的指针 + 一个指向具体类型 vtable 的指针)
 
 为 DST impl trait 也是有意义的, 因为我们可以通过 &self, &mut self 或其他智能指针的 deref 来调用相应的 trait methods
+
+另外也可以 impl dyn SomeTrait, 用来写只能通过 trait object 调用的函数, 比如 std::any::Any
 
 * Sized bound
 为什么加上 Sized bound 能让 trait 做不成 trait object
@@ -37,6 +40,32 @@ https://internals.rust-lang.org/t/make-associated-consts-object-safe/16357
 
 * generic trait VS trait with associated type
 we can impl multiple SomeTrait<T> for one specific type, but only can impl one trait with specific associated type
+
+#+begin_src rust
+pub trait Add<Rhs = Self> {
+    type Output;
+
+    fn add(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait Iterator {
+    type Item;
+
+    fn next(&mut self) -> Option<Self::Item>;
+}
+
+pub trait Extend<A> {
+    fn extend<T: IntoIterator<Item = A>>(&mut self, iter: T);
+}
+
+impl<T, A> Extend<T> for Vec<T, A>
+where
+    A: Allocator {...}
+#+end_src
+
++ Add is a generic trait (Rhs), and also have a associated type (Output)
++ Rhs has a default value: Self, such kind of parameter called default type parameter (it's useful to extend a type without breaking existing code, or allow customization in specific cases most users won't need)
++ Extend<T> is a generic trait, but we have made some generic implementations for all built-in collections, so we need not to implement it for new custom struct
 
 * vtable
 ** 一个 trait 加一个 type 确定一个 vtable
@@ -66,7 +95,7 @@ trait function 的参数和返回值不能是 Self 类型的, 因为编译器无
 ** Sized must not be a supertrait
 详见 Sized bound
 
-** generic
+** generic trait VS generic trait methods
 #+begin_src rust
 fn add_true_impl(vec: &mut impl Extend<bool>) {
     vec.extend(Some(true)); // Option impled IntoIterator
@@ -83,9 +112,7 @@ fn main() {
 }
 #+end_src
 
-上面注释掉的 add_true_dyn 通不过编译, 不是因为不能是范型 trait, 而是这个范型的 trait methods 还有别的范型
-
-比如 extend 的 I: IntoIterator<Item = A>, 这样具体实现了该 trait 的类型, 比如 Vec 就 **找不到一个** 函数指针来构建 vtable (每个范型会有不同的拷贝)
+上面注释掉的 add_true_dyn 通不过编译, 不是因为不能是范型 trait, 而是因为有 generic trait methods: extend<I> (数量可以任意多, 无法放入 vtable)
 
 #+begin_src rust
 pub trait Extend<A> {
@@ -113,6 +140,8 @@ fn add_true_dyn(vec: &mut dyn MyExtend<bool>) {
 * associated type/constant/function
 associated type is object safe, while associated const and function are not
 
+那两个不行, 是因为 rust 并没有反射机制, 即无法通过对象在运行时知道该对像的类型, 所以 trait object 不知道该调哪一个; 而且目前的 vtable 设计无法存下这两者
+
 #+begin_src rust
 trait Simple {
     // const CONST: i32 = 1; // not object safe, just think about where can we store it
@@ -123,7 +152,7 @@ trait Simple {
 
     fn make_const() -> i32
     where
-        Self: Sized,
+        Self: Sized, // NOTE: we can add this constraint even no self in function parameters
     {
         println!("Making associated constant...");
         1
