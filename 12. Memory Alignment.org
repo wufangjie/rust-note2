@@ -13,8 +13,8 @@ https://doc.rust-lang.org/nomicon/vec/vec-zsts.html
 struct Empty;
 
 fn main() {
-    dbg!(std::mem::align_of::<Empty>());
-    dbg!(std::mem::size_of::<Empty>());
-    dbg!(std::mem::align_of::<()>());
+    assert_eq!(8, std::mem::align_of::<Empty>());
+    assert_eq!(0, std::mem::size_of::<Empty>());
+    assert_eq!(1, std::mem::align_of::<()>());
 }
 #+end_src
