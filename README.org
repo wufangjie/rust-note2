@@ -4,6 +4,29 @@
 #+HTML_HEAD_EXTRA: <style type="text/css"> body {padding-left: 26%; background: #e3edcd;} #table-of-contents {position: fixed; width: 25%; height: 100%; top: 0; left: 0; overflow-y: scroll; resize: horizontal;} i {color: #666666;} pre, pre.src:before {color: #ffffff; background: #131926;} </style>
 #+HTML_HEAD_EXTRA: <script type="text/javascript"> function adjust_html(){document.getElementsByTagName("body")[0].style.cssText="padding-left: "+(parseInt(document.getElementById("table-of-contents").style.width)+5)+"px; background: #e3edcd;"}; window.onload=function(){document.getElementById("table-of-contents").addEventListener("mouseup",adjust_html,true)}</script>
 
+* table of contents
+# TODO: 双引号作为路径时打不开
+
++ [[./01. Ownership.org][01. Ownership]]
++ [[./02. References and Borrowing.org][02. References and Borrowing]]
++ [[./03. Lifetime.org][03. Lifetime]]
++ [[./04. std\:\:mem.org][04. std::mem]]
++ [[./05. trait object.org][05. trait object]]
++ [[./06. fn and Fn.org][06. fn, Fn and closure]]
++ [[./07. Send and Sync.org][07. Send and Sync]]
++ [[./08. async.org][08. async]]
++ [[./09. DST and ZST.org][09. DST and ZST]]
++ [[./10. Memory Safe.org][10. Memory Safe]]
++ [[./11. Memory Order.org][11. Memory Order]]
++ [[./12. Memory Alignment.org][12. Memory Alignment]]
++ [[./13. Drop and Drop Check.org][13. Drop and Drop Check]]
++ [[./14. Variance.org][14. Variance]]
++ [[./15. PhantomData.org][15. PhantomData]]
++ [[./16. std::borrow.org][16. std::borrow]]
++ [[./17. std::any.org][17. std::any]]
++ [[./18. Concurrency.org][18. Concurrency]]
++ [[./19. iterator.org][19. iterator.org]]
+
 * 这后面的内容还比较乱, 有时间再整理
 * 易错和小技巧
 ** deref
@@ -22,7 +45,6 @@ impl<T: ?Sized> const Deref for &mut T {
 + deref() 返回 &Self::Target 的另一个作用是可以不断 deref 直到达到我们的期望类型
 
 ** 0.. 表示零到无穷
-
 ** 慎用 let _ = y;
 目前为止那个博主 (jon gjengset) 翻车过两次, 一个是想用这句触发 drop 但实际上没有
 另一次是想验证自己实现的 Rc 是否是 Send 的
@@ -128,7 +150,18 @@ https://doc.rust-lang.org/reference/trait-bounds.html#lifetime-bounds
 | cmp::min      |    |        |
 | iterator::max |    |        |
 
-** as_ref, as_mut, get_ref, get_mut
+** as_ 或 get_ 前缀的方法
+*** as_ref, as_mut
++ 这两个可能是 AsRef, AsMut 的 trait method
++ 也可能是普通方法, 比如 Option, Result, Pin, pointer
+
+*** as_deref, as_deref_mut
+好像是只有 Option, Result, Pin 有
+
+*** get_ref
+
+*** get_mut
+这个有时候对应的是 get, 而不是 get_ref
 
 ** zero cost abstration
 经常看到, 可能会有理解的偏差 all of the analysis at compile time. You do not pay any run-time cost for any of these features
