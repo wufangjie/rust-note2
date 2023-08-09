@@ -1,7 +1,39 @@
-主要是解决为了效率引入的编译器代码乱序和 cpu 缓存同步问题
+* 作用
+主要是解决为了效率引入的:
+1. 编译器代码乱序 (Compiler Reordering)
+2. cpu 实际执行乱序和缓存同步问题 (Hardware Reordering)
 
+* 参考资料
 这篇文章结合硬件讲的非常好
 https://www.cnblogs.com/ishen/p/13200838.html
+https://zhuanlan.zhihu.com/p/55901945
 
-| store_buffer     | release |
-| invalidate_queue | acquire |
+* std::sync::atomic::Ordering
+以下类型是 Ordering 枚举类型的所有可能取值, 主要难以验证, 且网上众说纷纭, 我也不能保证以下的理解正确
+
+** Acquire
++ 把 invalidate_queue 中的数据同步过来
++ 阻止编译器把这句之后的读相关操作乱序到这句之前 (读不前, 任何读内存的代码和依赖它们的代码)
+
+This ordering is only applicable for operations that can perform a load
+
+** Release
++ 把改变写入 store_buffer
++ 阻止编译器把这句之前的写相关操作乱序到这句之后 (写不后, 任何写内存的代码和依赖它们的代码)
+
+This ordering is only applicable for operations that can perform a store
+
+** Relaxed
+不做任何保证, 但速度最快
+
+** AcqRel
+可以理解为 acquire + release, 读不前+写不后, 但不能阻止读往后或写往前?
+
+This ordering is only applicable for operations that combine both loads and stores
+只读只写的话等价于 Acquire 或 Release
+
+** SeqCst (sequentially consistent)
+相当于屏障一样, 完全分开了前后
+
+* CAS
+以上每种 order 都能保证被应用的那条语句是 atomic 的, CAS (compare and swap) 是原子操作的元语
