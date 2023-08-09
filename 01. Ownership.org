@@ -1,3 +1,4 @@
+* ownership system
 Ownership is Rust's most unique feature and has deep implications for the rest of the language.
 It enables Rust to make memory safety guarantees without needing a garbage collector
 ownership system 主要是三个方面: ownership, borrowing, lifetime
@@ -8,6 +9,8 @@ https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html
 1. Each value in Rust has a variable that's called its owner.
 2. There can only be one owner at a time.
 3. When the owner goes out of scope, the value will be dropped.
+
+NOTE: actually references do not have ownership, maybe because they are not value but (multi-)borrow a value
 
 * shadowing (re-let)
 shadowing 对编程舒适度提升很大, 但也有一些特殊情况要注意
@@ -31,22 +34,179 @@ fn main() {
 }
 #+end_src
 
-* transfer ownership (move)
-** 前提
-只有非 Copy (或者说 stack-only) 的数据才能 transfer ownership, NOTE: &T, &mut T 是栈上的指针当然也不能
+* Copy VS Clone
+** Copy
++ Copy is implict and an in expensive bit-wise copy
++ rust does not allow you to reimplement Copy
 
-** 方式
-+ 赋值
-+ 函数调用 (rust 的传参都属于值传递, 传引用其实也是栈上指针的传递)
+** types copyable
+*** &T
+#+begin_src rust
+impl<T: ?Sized> Copy for &T {}
+#+end_src
+if all fields of a struct are owned or &T, then it can derive Copy
+
+*** all primitive types (include raw pointers)
+#+begin_src rust
+marker_impls! {
+    #[stable(feature = "rust1", since = "1.0.0")]
+    Copy for
+        usize, u8, u16, u32, u64, u128,
+        isize, i8, i16, i32, i64, i128,
+        f32, f64,
+        bool, char,
+        {T: ?Sized} *const T,
+        {T: ?Sized} *mut T,
+
+}
+#+end_src
+
+*** others
++ function items (name)
++ function pointer (it's raw pointer)
++ types implementing Fn?
+
+** types not copyable
+*** &mut T
+it would create an alised mutable reference, so an assignment of &mut T, is a move, even though it's Stack-Only Data
+
+*** any type implementing Drop
+because it's managing some resource besides its own size_of::<T> bytes
+
+** Clone
+Clone is a *supertrait* of Copy, so everything which is Copy must also implement Clone.
+If a type is Copy then its Clone implementation only needs to return *self
+
+#+begin_src rust
+struct Generate<T>(fn() -> T);
+
+impl<T> Copy for Generate<T> {}
+
+impl<T> Clone for Generate<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+#+end_src
+
+* copy VS move
+** 何时发生
++ assignment
++ function call (rust 的传参都属于值传递, 传引用其实也是栈上指针的传递)
++ move into a closure (有点特殊, 详见 fn and Fn 章节)
++ pattern match
+
+** 基本规则 (使用哪个)
+就是没有实现 Copy 的 move, 实现了的 copy (bit-wise)
+这个是内置实现的, 不需要也不能手动处理
+另外对于非 &mut T 类型, 只要这条规则就够了, 此时的 move 也经常被说成是 transfer ownership
+
+#+begin_src rust
+fn main() {
+    let s1 = 42.to_string();
+    {
+        let s2 = s1;
+    }
+    // dbg!(s1); // Error: use of moved value: `s1`
+
+    let i1 = 42;
+    let i2 = i1;
+    dbg!(i1, i2); // it's ok even no scope
+
+    let r1 = &42.to_string();
+    {
+        let r2 = r1;
+    }
+    dbg!(r1); // it's ok
+}
+#+end_src
+
+** 特殊情况
+&mut T 比较特殊, 不能完全用 move 解释
+主要的区别是: owned 的类型一旦 move 就再也回不去了, 但 &mut T 可以通过 reborrow 实现 move back
+
+*** 适用 move 的情况
++ assigment
++ closure move
+
+*** 不适用 move 的情况 (此时会有隐式的 reborrow)
++ function call
++ closure capture
++ pattern match
+
+*** 示例1 method
+以下是 iterator 的 by_ref (避免其他 consume 的方法, 比如 take, 使得原 &mut T 失效) 的源码, 这个例子可能可以用 rust 对于 method 的调用会隐式的增加 & &mut 或 * 来解释 (所以也可能增加 &mut *?)
+#+begin_src rust
+fn by_ref(&mut self) -> &mut Self {
+    self
+}
+#+end_src
+
+*** 示例2 function
+非 method 的例子, 无法用上面的解释, 所以应该就是关于 &mut T 的编译器魔法 (函数调用时会自动隐式 reborrow)
+#+begin_src rust
+fn f(y: &mut i32) {}
+
+fn main() {
+    let mut x: i32 = 5;
+    let y = &mut x;
+    f(y); // Shouldn't y be "moved" here?
+    dbg!(y); // Compiles. Somewhat strange?
+}
+#+end_src
+
+*** 示例3 closure 相关
+#+begin_src rust
+fn main() {
+    let m1 = &mut 42;
+    {
+        // let m2 = m1; // it's not ok, move happen here
+	// let m2 = &mut *m1; // it's ok, reborrow by hand
+        let f = || *m1 = 5; // if we add move keywork, then it cannot compile
+    }
+    dbg!(m1); // it's ok
+}
+#+end_src
+
+*** 示例4 pattern match
+#+begin_src rust
+fn main() {
+    let mut i1 = (1..10).into_iter();
+    let m1 = &mut i1;
+    match m1 {
+        _ => m1.take(6).count(),
+    };
+    dbg!(m1.collect::<Vec<i32>>()); // still can use m1 here, but not for normal move
+}
+#+end_src
 
 ** 内存的变化
-表现为栈上数据 move (copy) (这个 move 貌似是不能避免的), 堆上数据不动
+都表现为栈上数据 bit-wise copy (这个貌似是不能避免的), 堆上数据不动或没有
 
 ** mutability
-move 的时候可以改变变量的 mutability
+move 的时候可以改变变量的 mutability (因为是 owned, 所以不会有问题)
 
 ** partial move
 struct 字段享有独立的 ownership, 所以可以 partial move out, 只是这样做之后不能再使用完整的 struct 对象, 使用没有 move out 的字段是可以的
+
+#+begin_src rust
+struct PartialMove {
+    a: i32,
+    b: String,
+}
+
+fn main() {
+    let x = PartialMove {
+	a: 42,
+	b: "hello".to_string()
+    };
+
+    match x {
+	PartialMove {a, ..} => dbg!(a),
+    };
+    dbg!(x.a, x.b); // a is Copy, b do not move out, so it compile, and here x is not destructed
+}
+#+end_src
 
 ** drop when move
 #+begin_src rust
@@ -61,14 +221,15 @@ impl Drop for PrintOnDrop {
 fn main() {
     let mut obj = PrintOnDrop("drops when overwritten");
     obj = PrintOnDrop("drops when moved (path statemet)"); // 这里会 drop 旧值
-    obj; // 这里会 drop, 但是会有 path statement warning, 而且容易忽略, 所以推荐用更直接的 drop(obj);
+    obj; // 这里会 drop, 但是会有 path statement warning, 而且容易忽略, 所以如果想 drop 的话推荐用更直观的 drop(obj); 另外 let _ = obj; 会是问题更复杂, 慎用 (见 README)
     println!("out of scope");
 }
 #+end_src
 
 * temporary variable 及其作用域扩大
 ** 临时变量有临时的 owner, 当前语句执行完就会被 drop
-一个常用的方式是用临时变量获取锁进行一些操作, 然后操作结束后就会释放锁, 而不用手动释放或引入 scope
+一个常用的方式是用临时变量获取锁进行一些操作 (函数式的连续的方法调用), 然后操作结束后就会释放锁, 而不用手动释放或引入 scope
+
 #+begin_src rust
 use std::rc::Rc;
 
