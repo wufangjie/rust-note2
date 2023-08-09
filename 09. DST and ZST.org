@@ -23,8 +23,12 @@ fn main() {
         &3i128 as &dyn Display,
     ]
     .into_iter()
-    .map(|x| size_of_val(x))
+    .map(|x| size_of_val(x))  // 这里 x 是 &T, size_of_val 的参数是 &T, 所以计算的是 T 的大小
     .eq([1, 8, 16]));
+
+    let a = &1i8 as &dyn ToString;
+    assert!(16, size_of_val(&a));
+    assert!(1, size_of_val(a));
     assert_eq!(size_of::<&u8>() * 2, size_of::<&dyn Display>());
 }
 #+end_src
